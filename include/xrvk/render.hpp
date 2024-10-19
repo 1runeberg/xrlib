@@ -145,7 +145,7 @@ namespace xrlib
 
 	};
 
-	struct SRenderInfo
+	struct SRenderFrameInfo
 	{
 	  public:
 		float nearZ = 0.f;
@@ -154,30 +154,55 @@ namespace xrlib
 		float minDepth = 0.f;
 		float maxDepth = 1.f;
 
+		uint32_t unCurrentSwapchainImage_Color = 0;
+		uint32_t unCurrentSwapchainImage_Depth = 0;
+
 		XrFrameState frameState { XR_TYPE_FRAME_STATE };
 		XrViewState sharedEyeState { XR_TYPE_VIEW_STATE };
+		XrCompositionLayerProjection projectionLayer { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 			
 		XrVector3f eyeScale = { 1.0f, 1.0f, 1.0f };
+		std::array< XrMatrix4x4f, 2 > arrEyeVPs = {};
+
 		std::vector< XrMatrix4x4f > eyeProjectionMatrices = { XrMatrix4x4f(), XrMatrix4x4f() };
 		std::vector< XrMatrix4x4f > eyeViewMatrices = { XrMatrix4x4f(), XrMatrix4x4f() };
 		
 		std::vector< XrOffset2Di > imageRectOffsets = { { 0, 0 }, { 0, 0 } }; 
-		std::vector< VkClearValue > clearValues;
+		std::vector< VkClearValue > clearValues = { { 0.0f, 0.0f, 0.0f, 1.0f },{ 1.0f, 0 } };
 
-		std::vector< XrCompositionLayerProjectionView > projectionLayers = {
+		std::vector< XrCompositionLayerProjectionView > projectionLayerViews = {
 			XrCompositionLayerProjectionView { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW },
 			XrCompositionLayerProjectionView { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
 
 		std::vector< XrCompositionLayerBaseHeader * > frameLayers;
 
-		SRenderInfo() 
-		{ 
-			clearValues.resize( 2 );
-			clearValues[ 0 ].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-			clearValues[ 1 ].depthStencil = { 1.0f, 0 };
+		std::vector< CDeviceBuffer * > vecStagingBuffers;
+
+		void ClearStagingBuffers()
+		{
+			 for ( CDeviceBuffer *pStagingBuffer : vecStagingBuffers )
+			 {
+				 if ( pStagingBuffer == nullptr ) delete pStagingBuffer;
+			 }
+
+			 vecStagingBuffers.clear();
+		}
+
+
+		SRenderFrameInfo( float near, float far, float min = 0.f, float max = 1.f ) :
+			nearZ ( near ),
+			farZ ( far ), 
+			minDepth( min ), 
+			maxDepth( max)
+		{
 		};
 
-		~SRenderInfo() {};
+		SRenderFrameInfo() 
+		{ 
+		};
+
+		~SRenderFrameInfo() {};
+
 	};
 
 	class CStereoRender
@@ -221,7 +246,7 @@ namespace xrlib
 		XrResult CreateSwapchains( uint32_t unFaceCount = 1, uint32_t unMipCount = 1 );
 		XrResult CreateSwapchainImages( std::vector < XrSwapchainImageVulkan2KHR > &outSwapchainImages, XrSwapchain xrSwapchain );
 
-		XrResult InitDefaultMultiviewRendering( VkRenderPass &outRenderPass );
+		XrResult CreateMainRenderPass( VkRenderPass &outRenderPass );
 		XrResult PrepareDefaultMultiviewRendering();
 		XrResult AddDefaultMultiviewRenderPass();
 		XrResult CreateDefaultMultiviewFramebuffers( VkRenderPass vkRenderPass );
@@ -371,7 +396,19 @@ namespace xrlib
 			const void *pNext = nullptr,
 			const VkAllocationCallbacks *pCallbacks = nullptr );
 
+		VkResult CreateGraphicsPipeline_Primitives( 
+			#ifdef XR_USE_PLATFORM_ANDROID
+				AAssetManager *assetManager,
+			#endif
+			VkPipeline &outPipeline, 
+			SGraphicsPipelineLayout &pipelineLayout, 
+			VkRenderPass vkRenderPass, 
+			std::string sVertexShaderFilename, 
+			std::string sFragmentShaderFilename 
+		);
+
 		VkResult AddRenderPass( VkRenderPassCreateInfo *renderPassCI, VkAllocationCallbacks *pAllocator = nullptr );
+		void RenderFrame( VkRenderPass renderPass, SGraphicsPipelineLayout pipelineLayout, SRenderFrameInfo &renderInfo, std::vector< CColoredPrimitive * > &primitives );
 
 		void BeginDraw(
 			const uint32_t unSwpachainImageIndex,

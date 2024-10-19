@@ -45,11 +45,27 @@ namespace xrlib
 			XrSpace space = XR_NULL_HANDLE;
 			XrPosef pose = { { 0.f, 0.f, 0.f, 1.f }, { 0.f, 0.f, 0.f } };
 			XrVector3f scale = { 1.f, 1.f, 1.f };
+
+			SInstanceState( XrVector3f defaultScale = { 1.f, 1.f, 1.f } )
+				: scale( defaultScale )
+			{
+			}
+
+			
+			SInstanceState( EAssetMotionType defaultMotionType, XrSpace defaultSpace = XR_NULL_HANDLE, XrVector3f defaultScale = { 1.f, 1.f, 1.f } ) : 
+				motionType(defaultMotionType), 
+				space( defaultSpace ),
+				scale( defaultScale )
+			{
+			}
+
+			~SInstanceState() {}
 		};
 
 		CPrimitive( 
 			CSession *pSession, 
 			uint32_t drawPriority = 0, 
+			XrVector3f scale = { 1.f, 1.f, 1.f },
 			EAssetMotionType motionType = EAssetMotionType::STATIC_INIT, 
 			VkPipeline graphicsPipeline = VK_NULL_HANDLE, 
 			XrSpace space = XR_NULL_HANDLE );
@@ -94,7 +110,7 @@ namespace xrlib
 		CDeviceBuffer *UpdateBuffer( VkCommandBuffer transferCmdBuffer );
 
 		uint32_t GetInstanceCount() { return (uint32_t) instances.size(); }
-		uint32_t AddInstance( uint32_t unCount );
+		uint32_t AddInstance( uint32_t unCount, XrVector3f scale = { 1.f, 1.f, 1.f } );
 		
 		CDeviceBuffer *GetIndexBuffer() { return m_pIndexBuffer; }
 		CDeviceBuffer *GetVertexBuffer() { return m_pVertexBuffer; }
@@ -131,6 +147,7 @@ namespace xrlib
 		CColoredPrimitive(
 			CSession *pSession,
 			uint32_t drawPriority = 0,
+			XrVector3f scale = { 1.f, 1.f, 1.f },
 			EAssetMotionType motionType = EAssetMotionType::STATIC_INIT,
 			float fAlpha = 1.f,
 			VkPipeline graphicsPipeline = VK_NULL_HANDLE,
@@ -167,6 +184,7 @@ namespace xrlib
 		CPyramid( 
 			CSession *pSession, 
 			uint32_t drawPriority = 0, 
+			XrVector3f scale = { 1.f, 1.f, 1.f },
 			EAssetMotionType motionType = EAssetMotionType::STATIC_INIT, 
 			VkPipeline graphicsPipeline = VK_NULL_HANDLE, 
 			XrSpace space = XR_NULL_HANDLE );
@@ -179,6 +197,7 @@ namespace xrlib
 		CColoredPyramid(
 			CSession *pSession,
 			uint32_t drawPriority = 0,
+			XrVector3f scale = { 1.f, 1.f, 1.f },
 			EAssetMotionType motionType = EAssetMotionType::STATIC_INIT,
 			float fAlpha = 1.f,
 			VkPipeline graphicsPipeline = VK_NULL_HANDLE,
@@ -192,6 +211,7 @@ namespace xrlib
 		CColoredCube(
 			CSession *pSession,
 			uint32_t drawPriority = 0,
+			XrVector3f scale = { 1.f, 1.f, 1.f },
 			EAssetMotionType motionType = EAssetMotionType::STATIC_INIT,
 			float fAlpha = 1.f,
 			VkPipeline graphicsPipeline = VK_NULL_HANDLE,

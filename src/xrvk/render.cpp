@@ -326,7 +326,7 @@ namespace xrlib
 		return XR_SUCCESS;
 	}
 
-	XrResult CStereoRender::InitDefaultMultiviewRendering( VkRenderPass &outRenderPass ) 
+	XrResult CStereoRender::CreateMainRenderPass( VkRenderPass &outRenderPass ) 
 	{ 
 		XR_RETURN_ON_ERROR( PrepareDefaultMultiviewRendering() );
 		XR_RETURN_ON_ERROR( AddDefaultMultiviewRenderPass() );
@@ -368,7 +368,7 @@ namespace xrlib
 		uint32_t unSwapchainImageCount = (uint32_t) m_vecSwapchainColorImages.size();
 		if ( unSwapchainImageCount != (uint32_t) m_vecSwapchainDepthImages.size() )
 		{
-			LogError( "", "Error creating multiview render targets: color & depth swpachin must be of equal length!" );
+			LogError( "", "Error creating multiview render targets: color & depth swpachain must be of equal length!" );
 			return XR_ERROR_VALIDATION_FAILURE;
 		}
 
@@ -501,7 +501,12 @@ namespace xrlib
 		VkRenderPassMultiviewCreateInfo multiviewCI = GenerateMultiviewCI();
 		renderPassCI.pNext = &multiviewCI; 
 
-		assert( AddRenderPass( &renderPassCI ) == VK_SUCCESS );
+		VkResult result = AddRenderPass( &renderPassCI );
+		if ( !VK_CHECK_SUCCESS( result ) )
+		{
+			LogError( LOG_CATEGORY_DEFAULT, "Error creating render pass!" );
+			return XR_ERROR_VALIDATION_FAILURE;
+		}
 		return XR_SUCCESS;
 	}
 
@@ -901,6 +906,94 @@ namespace xrlib
 		return vkCreateGraphicsPipelines( GetLogicalDevice(), pipelineCache, 1, &pipelineCI, pCallbacks, &outPipeline );
 	}
 
+	VkResult CStereoRender::CreateGraphicsPipeline_Primitives( 
+		#ifdef XR_USE_PLATFORM_ANDROID
+			AAssetManager *assetManager,
+		#endif
+		VkPipeline &outPipeline,
+		SGraphicsPipelineLayout &pipelineLayout,
+		VkRenderPass vkRenderPass,
+		std::string sVertexShaderFilename,
+		std::string sFragmentShaderFilename ) 
+	{ 
+		assert( GetLogicalDevice() != VK_NULL_HANDLE );
+
+		// (1) Create pipeline layout with push constant dsefinitions for the shader
+		std::vector< VkPushConstantRange > vecPCRs = { { VK_SHADER_STAGE_VERTEX_BIT, 0, pipelineLayout.size } };
+		std::vector< VkDescriptorSetLayout > vecLayouts;
+		VkPipelineLayoutCreateInfo pipelineLayoutCI = GeneratePipelineLayoutCI( vecPCRs, vecLayouts );
+
+		VkResult result = vkCreatePipelineLayout( GetLogicalDevice(), &pipelineLayoutCI, nullptr, &pipelineLayout.layout );
+		if ( !VK_CHECK_SUCCESS( result ) )
+			return result;
+
+		// (2) Setup shader set
+		SShaderSet *pShaders = new SShaderSet( sVertexShaderFilename, sFragmentShaderFilename );
+
+		#ifdef XR_USE_PLATFORM_ANDROID
+			pShaders->Init( assetManager, GetLogicalDevice() );
+		#else
+			pShaders->Init( GetLogicalDevice() );
+		#endif
+
+		// (3) Define shader vertex inputs
+		pShaders->vertexBindings.push_back( { 0, sizeof( SColoredVertex ), VK_VERTEX_INPUT_RATE_VERTEX } );
+		pShaders->vertexAttributes.push_back( { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof( SColoredVertex, position ) } );
+		pShaders->vertexAttributes.push_back( { 1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof( SColoredVertex, color ) } );
+
+		pShaders->vertexBindings.push_back( { 1, sizeof( XrMatrix4x4f ), VK_VERTEX_INPUT_RATE_INSTANCE } );
+		uint32_t sizeFloat = (uint32_t) sizeof( float );
+		pShaders->vertexAttributes.push_back( { 2, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0 } );
+		pShaders->vertexAttributes.push_back( { 3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 4 * sizeFloat } );
+		pShaders->vertexAttributes.push_back( { 4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 8 * sizeFloat } );
+		pShaders->vertexAttributes.push_back( { 5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 12 * sizeFloat } );
+
+		auto vertexInputCI = GeneratePipelineStateCI_VertexInput( pShaders->vertexBindings, pShaders->vertexAttributes );
+
+		// (4) Define viewport
+		std::vector< VkViewport > vecViewports { { 0.0f, 0.0f, (float) GetTextureWidth(), (float) GetTextureHeight(), 0.0f, 1.0f } }; // Will invert y after projection
+		std::vector< VkRect2D > vecScissors { { { 0, 0 }, GetTextureExtent() } };
+
+		auto viewportCI = GeneratePipelineStateCI_ViewportCI( vecViewports, vecScissors );
+
+		// (5) Setup color blend attachments
+		std::vector< VkPipelineColorBlendAttachmentState > vecColorBlendAttachments { GenerateColorBlendAttachment() };
+		auto colorBlendCI = GeneratePipelineStateCI_ColorBlendCI( vecColorBlendAttachments );
+
+		// (6) Define Dynamic states
+		std::vector< VkDynamicState > vecDynamicStates; // { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+		auto dynamicStateCI = GeneratePipelineStateCI_DynamicStateCI( vecDynamicStates );
+
+		// (7) Define other pipeline states
+		auto assemblyCI = GeneratePipelineStateCI_Assembly();
+		auto rasterizationCI = GeneratePipelineStateCI_RasterizationCI();
+		auto multisampleCI = GeneratePipelineStateCI_MultisampleCI();
+		auto depthStencilCI = GeneratePipelineStateCI_DepthStencilCI();
+
+		// (8) Create graphics pipeline
+		result = CreateGraphicsPipeline(
+			outPipeline, 
+			pipelineLayout.layout, 
+			vkRenderPass, 
+			pShaders->stages, 
+			&vertexInputCI, 
+			&assemblyCI, 
+			nullptr, 
+			&viewportCI, 
+			&rasterizationCI, 
+			&multisampleCI, 
+			&depthStencilCI, 
+			&colorBlendCI, 
+			&dynamicStateCI );
+
+		if ( !VK_CHECK_SUCCESS( result ) )
+			return result;
+
+		// (9) Cleanup
+		delete pShaders;
+		return VK_SUCCESS; 
+	}
+
 	VkResult CStereoRender::AddRenderPass( VkRenderPassCreateInfo *renderPassCI, VkAllocationCallbacks *pAllocator ) 
 	{ 
 		assert( renderPassCI );
@@ -916,6 +1009,141 @@ namespace xrlib
 		}
 
 		return VK_SUCCESS;
+	}
+
+	void CStereoRender::RenderFrame( VkRenderPass renderPass, SGraphicsPipelineLayout pipelineLayout, SRenderFrameInfo &renderInfo, std::vector< CColoredPrimitive * > &primitives ) 
+	{
+		// (1) Start frame
+		if ( !XR_UNQUALIFIED_SUCCESS( m_pSession->StartFrame( &renderInfo.frameState ) ) )
+			return;
+
+		// (2) Render frame
+		if ( renderInfo.frameState.shouldRender )
+		{
+			// (2.1) Update eye view pose, fov, etc
+			m_pSession->UpdateEyeStates( 
+				GetEyeViews(), 
+				renderInfo.eyeProjectionMatrices, 
+				&renderInfo.sharedEyeState, 
+				&renderInfo.frameState, 
+				m_pSession->GetAppSpace() );
+
+			// Only render if updated eye orientation is valid
+			if ( renderInfo.sharedEyeState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT )
+			{
+				// (2.2) Update frame layers (projection view)
+				for ( uint32_t i = 0; i < k_EyeCount; i++ )
+				{
+					renderInfo.projectionLayerViews[ i ].pose = GetEyeViews().at( i ).pose;
+					renderInfo.projectionLayerViews[ i ].fov = GetEyeViews().at( i ).fov;
+					renderInfo.projectionLayerViews[ i ].subImage.swapchain = GetColorSwapchain();
+					renderInfo.projectionLayerViews[ i ].subImage.imageArrayIndex = i;
+					renderInfo.projectionLayerViews[ i ].subImage.imageRect.offset = { 0, 0 };
+					renderInfo.projectionLayerViews[ i ].subImage.imageRect.extent = GetTexutreExtent2Di();
+
+					XrCompositionLayerDepthInfoKHR depthInfo { XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR };
+					depthInfo.subImage.swapchain = GetDepthSwapchain();
+					depthInfo.subImage.imageArrayIndex = i;
+					depthInfo.subImage.imageRect.offset = renderInfo.imageRectOffsets[ i ];
+					depthInfo.subImage.imageRect.extent = GetTexutreExtent2Di();
+					depthInfo.minDepth = renderInfo.minDepth;
+					depthInfo.maxDepth = renderInfo.maxDepth;
+					depthInfo.nearZ = renderInfo.nearZ;
+					depthInfo.farZ = renderInfo.farZ;
+
+					renderInfo.projectionLayerViews[ i ].next = &depthInfo;
+				}
+
+				// (2.3) Acquire swapchain images
+				m_pSession->AcquireFrameImage( 
+					&renderInfo.unCurrentSwapchainImage_Color, 
+					&renderInfo.unCurrentSwapchainImage_Depth, 
+					GetColorSwapchain(), 
+					GetDepthSwapchain() );
+
+				// (2.4) Copy model matrices to gpu buffer
+				renderInfo.ClearStagingBuffers();
+				{
+					// (2.4.1) Begin buffer recording to gpu
+					BeginBufferUpdates( renderInfo.unCurrentSwapchainImage_Color );
+
+					// (2.4.2) Update asset buffers
+					XrTime renderTime = renderInfo.frameState.predictedDisplayTime + renderInfo.frameState.predictedDisplayPeriod;
+
+					for ( uint32_t i = 0; i < primitives.size(); i++ )
+					{
+						// Update matrices (for each instance)
+						for ( uint32_t j = 0; j < primitives[ i ]->instances.size(); j++ )
+							primitives[ i ]->UpdateModelMatrix( j, m_pSession->GetAppSpace(), renderTime );
+
+						// Add to render
+						renderInfo.vecStagingBuffers.push_back( 
+							primitives[ i ]->UpdateBuffer( GetMultiviewRenderTargets().at( renderInfo.unCurrentSwapchainImage_Color ).vkTransferCommandBuffer ) );
+					}
+
+					// (2.4.3) Submit to gpu
+					SubmitBufferUpdates( renderInfo.unCurrentSwapchainImage_Color );
+				}
+
+				// (2.5) Begin draw commands for rendering
+				BeginDraw( renderInfo.unCurrentSwapchainImage_Color, renderInfo.clearValues, true, renderPass );
+
+				// (2.6) Update push constants
+				CalculateViewMatrices( renderInfo.eyeViewMatrices, &renderInfo.eyeScale );
+
+				XrMatrix4x4f_Multiply( &renderInfo.arrEyeVPs[ k_Left ], &renderInfo.eyeProjectionMatrices[ k_Left ], &renderInfo.eyeViewMatrices[ k_Left ] );
+				XrMatrix4x4f_Multiply( &renderInfo.arrEyeVPs[ k_Right ], &renderInfo.eyeProjectionMatrices[ k_Right ], &renderInfo.eyeViewMatrices[ k_Right ] );
+
+				vkCmdPushConstants( 
+					GetMultiviewRenderTargets().at( renderInfo.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, 
+					pipelineLayout.layout, 
+					VK_SHADER_STAGE_VERTEX_BIT, 
+					0, 
+					pipelineLayout.size, 
+					renderInfo.arrEyeVPs.data() );
+
+				// (2.7) Draw render assets
+				for ( CColoredPrimitive* coloredPrimitive : primitives )
+				{
+					// Bind the graphics pipeline for this shape
+					vkCmdBindPipeline( GetMultiviewRenderTargets().at( renderInfo.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, coloredPrimitive->pipeline );
+
+					// Bind shape's index and vertex buffers
+					vkCmdBindIndexBuffer( GetMultiviewRenderTargets().at( renderInfo.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, coloredPrimitive->GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT16 );
+
+					vkCmdBindVertexBuffers( GetMultiviewRenderTargets().at( renderInfo.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, 0, 1, coloredPrimitive->GetVertexBuffer()->GetVkBufferPtr(), coloredPrimitive->vertexOffsets );
+
+					vkCmdBindVertexBuffers( GetMultiviewRenderTargets().at( renderInfo.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, 1, 1, coloredPrimitive->GetInstanceBuffer()->GetVkBufferPtr(), coloredPrimitive->instanceOffsets );
+
+					// Draw the shape
+					vkCmdDrawIndexed( GetMultiviewRenderTargets().at( renderInfo.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, 
+						coloredPrimitive->GetIndices().size(), coloredPrimitive->GetInstanceCount(), 0, 0, 0 );
+				}
+
+				// (2.8) Wait for swapchain images. This ensures that the openxr runtime is finish with them before we submit the draw commands to the gpu
+				m_pSession->WaitForFrameImage( GetColorSwapchain(), GetDepthSwapchain() );
+
+				// (2.9) Submit draw calls to gpu - this will also clear the staging buffers (if any)
+				SubmitDraw( renderInfo.unCurrentSwapchainImage_Color, renderInfo.vecStagingBuffers );
+
+				// (2.10) Release the swapchian image to let the openxr runtime know we're through with it
+				m_pSession->ReleaseFrameImage( GetColorSwapchain(), GetDepthSwapchain() );
+			}
+
+			// (2.11) Assemble frame layers
+			renderInfo.projectionLayer.next = nullptr;
+			renderInfo.projectionLayer.layerFlags = 0;
+
+			renderInfo.projectionLayer.space = m_pSession->GetAppSpace();
+			renderInfo.projectionLayer.viewCount = (uint32_t) renderInfo.projectionLayerViews.size();
+			renderInfo.projectionLayer.views = renderInfo.projectionLayerViews.data();
+
+			renderInfo.frameLayers.push_back( reinterpret_cast< XrCompositionLayerBaseHeader * >( &renderInfo.projectionLayer ) );
+		}
+
+		// (3) End frame
+		m_pSession->EndFrame( &renderInfo.frameState, renderInfo.frameLayers );
+		renderInfo.frameLayers.clear();
 	}
 
 	void CStereoRender::BeginDraw(

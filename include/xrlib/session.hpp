@@ -9,11 +9,23 @@
 #include <vector>
 #include <xrlib/instance.hpp>
 
+#define VK_CHECK_SUCCESS( result ) ( ( result ) == VK_SUCCESS )
+
 namespace xrlib
 {
+	struct SSessionSettings
+	{
+		bool bUseMultiviewRendering = true;
+		VkSurfaceKHR *pSurface = nullptr;
+		XrSessionCreateFlags flgAdditionalCreateInfo = 0;
+		void *pVkInstanceNext = nullptr;
+		void *pXrVkInstanceNext = nullptr;
+		void *pVkLogicalDeviceNext = nullptr;
+		void *pXrLogicalDeviceNext = nullptr;
+	};
+
 	class CInstance;
 	class CVulkan;
-
 	class CSession
 	{
 	  public:
@@ -26,6 +38,7 @@ namespace xrlib
 		XrReferenceSpaceType xrAppReferenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
 		XrViewConfigurationType xrViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 
+		XrResult Init( SSessionSettings &settings );
 		XrResult Init(
 			VkSurfaceKHR *pSurface = nullptr,
 			XrSessionCreateFlags flgAdditionalCreateInfo = 0,

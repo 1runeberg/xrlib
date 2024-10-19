@@ -22,6 +22,8 @@ set(XRLIB_INCLUDE "${XRLIB_ROOT}/include")
 set(XRLIB_BIN_OUT "${XRLIB_ROOT}/bin")
 set(XRLIB_LIB_OUT "${XRLIB_ROOT}/lib")
 set(THIRD_PARTY "${XRLIB_ROOT}/third_party")
+set(XRLIB_EXT_INCLUDE "${XRLIB_INCLUDE}/${XRLIB}/ext")
+set(XRLIB_EXT_SRC "${XRLIB_SRC}/${XRLIB}/ext")
 
 set(XRVK_INCLUDE "${XRLIB_INCLUDE}/xrvk")
 set(XRVK_SRC "${XRLIB_SRC}/xrvk")
@@ -73,6 +75,47 @@ file(GLOB_RECURSE XRLIB_SOURCE
 file(GLOB_RECURSE XRVK_SOURCE
         "${XRVK_SRC}/*.c*"
 	)
+
+# Exclude extensions (option)
+option(EXCLUDE_KHR_VISIBILITY_MASK "EXCLUDE_KHR_VISIBILITY_MASK" OFF) 
+set(FILES_KHR_VISIBILITY_MASK "KHR/visibility_mask")
+
+option(EXCLUDE_EXT_HAND_TRACKING "EXCLUDE_EXT_HAND_TRACKING" OFF) 
+set (FILES_EXT_HAND_TRACKING  "EXT/hand_tracking" )
+
+option(EXCLUDE_FB_DISPLAY_REFRESH "EXCLUDE_FB_DISPLAY_REFRESH" OFF) 
+set (FILES_FB_DISPLAY_REFRESH "FB/display_refresh_rate" )
+
+option(EXCLUDE_FB_PASSTHROUGH "EXCLUDE_FB_PASSTHROUGH" OFF) 
+set (FILES_FB_PASSTHROUGH "FB/passthrough" "FB/triangle_mesh")
+
+if (${EXCLUDE_KHR_VISIBILITY_MASK} STREQUAL "ON")
+    foreach( f IN ITEMS ${FILES_KHR_VISIBILITY_MASK} )
+        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp" )
+        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp" )
+    endforeach()
+endif()
+
+if (${EXCLUDE_EXT_HAND_TRACKING})
+    foreach(f IN ITEMS ${FILE_EXT_HAND_TRACKING})
+        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp")
+        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp")
+    endforeach()
+endif()
+
+if (${EXCLUDE_FB_DISPLAY_REFRESH})
+    foreach(f IN ITEMS ${FILES_FB_DISPLAY_REFRESH} )
+        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp")
+        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp")
+    endforeach()
+endif()
+
+if (${EXCLUDE_FB_PASSTHROUGH})
+    foreach(f IN ITEMS ${FILES_FB_PASSTHROUGH} )
+        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp")
+        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp")
+    endforeach()
+endif()
 
 # Set openxr
 set(OPENXR_ROOT "${THIRD_PARTY}/openxr")

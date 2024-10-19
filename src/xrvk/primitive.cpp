@@ -8,7 +8,7 @@
 
 namespace xrlib
 {
-	CPrimitive::CPrimitive( CSession *pSession, uint32_t drawPriority, EAssetMotionType motionType, VkPipeline graphicsPipeline, XrSpace space ) : 
+	CPrimitive::CPrimitive( CSession *pSession, uint32_t drawPriority, XrVector3f scale, EAssetMotionType motionType, VkPipeline graphicsPipeline, XrSpace space ) :
 		m_pSession( pSession ),
 		unDrawPriority( drawPriority ), 
 		pipeline( graphicsPipeline )
@@ -21,7 +21,7 @@ namespace xrlib
 		m_pInstanceBuffer = new CDeviceBuffer( pSession );
 
 		// Pre-fill first instance
-		instances.push_back( SInstanceState { motionType, space } ); // pre-fill first instance
+		instances.push_back( SInstanceState { motionType, space, scale } ); // pre-fill first instance
 		instanceMatrices.push_back( XrMatrix4x4f() );
 		XrMatrix4x4f_CreateTranslationRotationScale( &instanceMatrices[ 0 ], GetPosition( 0 ), GetOrientation( 0 ), GetScale( 0 ) );
 	}
@@ -162,11 +162,11 @@ namespace xrlib
 		return pStagingBuffer;
 	}
 
-	uint32_t CPrimitive::AddInstance( uint32_t unCount ) 
+	uint32_t CPrimitive::AddInstance( uint32_t unCount, XrVector3f scale ) 
 	{ 
 		for ( size_t i = 0; i < unCount; i++ )
 		{
-			instances.push_back( SInstanceState() );
+			instances.push_back( SInstanceState( scale ) );
 			instanceMatrices.push_back( XrMatrix4x4f() );
 		}
 
@@ -174,8 +174,7 @@ namespace xrlib
 			delete m_pInstanceBuffer;
 
 		m_pInstanceBuffer = new CDeviceBuffer( m_pSession );
-		VkResult result = InitBuffer( m_pInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( XrMatrix4x4f ) * instanceMatrices.size(), nullptr );
-		assert( result == VK_SUCCESS );
+		assert( InitBuffer( m_pInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( XrMatrix4x4f ) * instanceMatrices.size(), nullptr ) == VK_SUCCESS);
 
 		return GetInstanceCount();
 	}
@@ -238,11 +237,12 @@ namespace xrlib
 	CColoredPrimitive::CColoredPrimitive( 
 		CSession *pSession, 
 		uint32_t drawPriority, 
+		XrVector3f scale,
 		EAssetMotionType motionType,
 		float fAlpha, 
 		VkPipeline graphicsPipeline, 
 		XrSpace space ) 
-		: CPrimitive( pSession, drawPriority, motionType, graphicsPipeline, space )
+		: CPrimitive( pSession, drawPriority, scale, motionType, graphicsPipeline, space )
 	{
 	
 	}
@@ -323,8 +323,8 @@ namespace xrlib
 		return InitBuffer( m_pInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, sizeof( XrMatrix4x4f ) * instanceMatrices.size(), instanceMatrices.data() );
 	}
 
-	CPyramid::CPyramid( CSession *pSession, uint32_t drawPriority, EAssetMotionType EAssetMotionType, VkPipeline graphicsPipeline, XrSpace space )
-		: CPrimitive( pSession, drawPriority, EAssetMotionType, graphicsPipeline, space )
+	CPyramid::CPyramid( CSession *pSession, uint32_t drawPriority, XrVector3f scale, EAssetMotionType EAssetMotionType, VkPipeline graphicsPipeline, XrSpace space )
+		: CPrimitive( pSession, drawPriority, scale, EAssetMotionType, graphicsPipeline, space )
 
 	{
 		const XrVector3f VertPyramid_Tip { 0.f, 0.f, -0.5f };
@@ -346,8 +346,8 @@ namespace xrlib
 
 	CPyramid::~CPyramid() {}
 
-	CColoredPyramid::CColoredPyramid( CSession *pSession, uint32_t drawPriority, EAssetMotionType motionType, float fAlpha, VkPipeline graphicsPipeline, XrSpace space )
-		: CColoredPrimitive( pSession, drawPriority, motionType, fAlpha, graphicsPipeline, space )
+	CColoredPyramid::CColoredPyramid( CSession *pSession, uint32_t drawPriority, XrVector3f scale, EAssetMotionType motionType, float fAlpha, VkPipeline graphicsPipeline, XrSpace space )
+		: CColoredPrimitive( pSession, drawPriority, scale, motionType, fAlpha, graphicsPipeline, space )
 	{
 		const XrVector3f VertPyramid_Tip { 0.f, 0.f, -0.5f };
 		const XrVector3f VertPyramid_Top { 0.f, 0.5f, 0.5f };
@@ -368,8 +368,8 @@ namespace xrlib
 
 	CColoredPyramid::~CColoredPyramid() {}
 
-	CColoredCube::CColoredCube( CSession *pSession, uint32_t drawPriority, EAssetMotionType motionType, float fAlpha, VkPipeline graphicsPipeline, XrSpace space ) 
-		: CColoredPrimitive( pSession, drawPriority, motionType, fAlpha, graphicsPipeline, space )
+	CColoredCube::CColoredCube( CSession *pSession, uint32_t drawPriority, XrVector3f scale, EAssetMotionType motionType, float fAlpha, VkPipeline graphicsPipeline, XrSpace space ) 
+		: CColoredPrimitive( pSession, drawPriority, scale, motionType, fAlpha, graphicsPipeline, space )
 	{
 		// Vertices for a 1x1x1 meter cube. (Left/Right, Top/Bottom, Front/Back)
 		const XrVector3f LBB { -0.5f, -0.5f, -0.5f };

@@ -29,6 +29,36 @@ namespace xrlib
 			delete m_pVulkan;
 	}
 
+	XrResult CSession::Init( SSessionSettings &settings ) 
+	{ 
+		// Enable multiview rendering
+		if ( settings.bUseMultiviewRendering )
+		{
+			VkPhysicalDeviceVulkan11Features vkPhysicalFeatures11 { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+			vkPhysicalFeatures11.multiview = VK_TRUE;
+
+			if ( settings.pVkLogicalDeviceNext )
+			{
+				vkPhysicalFeatures11.pNext = settings.pVkLogicalDeviceNext;
+				settings.pVkLogicalDeviceNext = &vkPhysicalFeatures11;
+			}
+			else
+			{
+				settings.pVkLogicalDeviceNext = &vkPhysicalFeatures11;
+			}
+		}
+
+		// Init rendering
+		return Init(
+			settings.pSurface,
+			settings.flgAdditionalCreateInfo, 
+			settings.pVkInstanceNext, 
+			settings.pXrVkInstanceNext, 
+			settings.pVkLogicalDeviceNext, 
+			settings.pXrLogicalDeviceNext
+		); 
+	}
+
 	XrResult CSession::Init(
 		VkSurfaceKHR *pSurface,
 		XrSessionCreateFlags flgAdditionalCreateInfo,
