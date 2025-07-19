@@ -376,6 +376,9 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
+# Mac files
+.DS_Store
+
 # Exceptions
 !*.gltf
 !*.glb
