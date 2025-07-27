@@ -281,6 +281,35 @@ namespace xrlib
 		XrResult SuggestBindings( Controller *controller, void *pOtherInfo );
 
 		/// <summary>
+		/// Adds a binding to a controller struct
+		/// </summary>
+		/// <param name="controller">Out parameter - controller struct to attach the binding to, if a base controller, it will add to all "supported controllers" defined for it</param>
+		/// <param name="action">The action to bind to the controller input</param>
+		/// <param name="hand">Hand (left/right)</param>
+		/// <param name="component">Component of the controller for this binding (e.g. thumbstick)</param>
+		/// <param name="qualifier">Optional qualifier (e.g. None, click, touch)</param>
+		/// <returns>Result of operation from the openxr runtime when attempting to create the binding paths for the specific controller(s)</returns>
+		XrResult AddBinding( BaseController *controller, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier );
+
+		/// <summary>
+		/// Adds a binding to a controller struct. This allows for providign full binding paths. Note that this path is unchecked at this point, openxr runtime may reject during suggestbindings() if
+		/// invalid
+		/// </summary>
+		/// <param name="controller">Out parameter - controller struct to attach the binding to, if a base controller, it will add to all "supported controllers" defined for it</param>
+		/// <param name="action">The action to bind to the controller input</param>
+		/// <param name="sFullBindingPath">Full binding path - check openxr spec and/or ext spec for the correct binding (e.g. "/user/hand/left/input/menu/click")</param>
+		/// <returns>>Result of operation from the openxr runtime when attempting to create the binding paths for the specific controller(s)</returns>
+		XrResult AddBinding( BaseController *controller, XrAction action, std::string sFullBindingPath );
+
+		/// <summary>
+		/// Suggests all bindings added via AddBinding() to the openxr runtime
+		/// </summary>
+		/// <param name="controller">Pointer to controller struct representing the controller, or in the case of a base controller, all controllers supported by it</param>
+		/// <param name="pOtherInfo">Optional other info via extensions</param>
+		/// <returns>Result of the suggest binding operation from the runtime</returns>
+		XrResult SuggestBindings( BaseController *controller, void *pOtherInfo );
+
+		/// <summary>
 		/// Converts a given c++ string to an openxr path/handle
 		/// </summary>
 		/// <param name="string">The string to convert</param>

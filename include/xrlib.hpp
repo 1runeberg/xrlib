@@ -16,3 +16,29 @@
 #include <xrlib/session.hpp>
 #include <xrlib/input.hpp>
 #include <xrlib/vulkan.hpp>
+
+namespace xrlib
+{
+    #ifdef XR_USE_PLATFORM_ANDROID
+    static void ExitApp( struct android_app *pAndroidApp)
+    {
+        if ( pAndroidApp && pAndroidApp->activity && pAndroidApp->activity->vm && pAndroidApp->activity->clazz )
+        {
+            JNIEnv *env = nullptr;
+            pAndroidApp->activity->vm->AttachCurrentThread( &env, nullptr );
+            jclass activityClass = env->GetObjectClass( pAndroidApp->activity->clazz );
+            jmethodID finishMethod = env->GetMethodID( activityClass, "finish", "()V" );
+            env->CallVoidMethod( pAndroidApp->activity->clazz, finishMethod );
+            pAndroidApp->activity->vm->DetachCurrentThread();
+        }
+    }
+    #else
+    static int ExitApp( int result )
+        {
+            std::cout << "\n\nPress enter to end.";
+            std::cin.get();
+
+            return result;
+        }
+    #endif
+} // namespace xrlib

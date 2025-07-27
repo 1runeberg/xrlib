@@ -43,11 +43,12 @@
 #include <third_party/openxr/include/openxr/openxr_reflection.h>
 #include <third_party/openxr/src/common/xr_linear.h>
 
+#include "xrlib/log.hpp"
 namespace xrlib
 {
 	inline static float GetLength( const XrVector4f *v ) { return sqrtf( v->x * v->x + v->y * v->y + v->z * v->z + v->w * v->w ); }
 
-	static const float GetDistance( XrVector3f &a, XrVector3f &b ) 
+	static float GetDistance( XrVector3f &a, XrVector3f &b )
 	{
 		float dx = a.x - b.x;
 		float dy = a.y - b.y;
@@ -55,7 +56,44 @@ namespace xrlib
 		return std::sqrt( dx * dx + dy * dy + dz * dz );
 	};
 
-	#ifdef XR_USE_PLATFORM_ANDROID
+	template < typename T >
+	concept HasStaticType = requires {
+		{ T::type } -> std::convertible_to< XrStructureType >;
+	};
+
+	template < typename T >
+	concept HasNextField = requires( const T &t ) {
+		{ t.next } -> std::convertible_to< const void * >;
+	};
+
+	template < typename TTarget, typename TContainer >
+		requires HasStaticType< TTarget > && HasNextField< TContainer >
+	const TTarget *GetStructureFromChain( const TContainer &container, XrStructureType xrTargetType )
+	{
+		const void *current = &container;
+		LogDebug("GetStructureFromChain", "Searching for structure type %d in chain", xrTargetType );
+
+		// Traverse next chain
+		while ( current )
+		{
+			// Debug log: print the type of the current structure
+			const auto *pBaseStruct = static_cast< const TTarget * >( current );
+			LogDebug("GetStructureFromChain", "Debug: Structure type = %d, Target type = %d", pBaseStruct->type, xrTargetType);
+
+			// Get the target structure type at compile time
+			if ( pBaseStruct->type == xrTargetType )
+			{
+				LogDebug("GetStructureFromChain", "Found structure type %d in chain", xrTargetType );
+				return pBaseStruct;
+			}
+
+			current = pBaseStruct->next;
+		}
+
+		return nullptr;
+	}
+
+#ifdef XR_USE_PLATFORM_ANDROID
 	struct AndroidAppState
 	{
 		ANativeWindow *NativeWindow = nullptr;

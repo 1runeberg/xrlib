@@ -276,6 +276,17 @@ namespace xrlib::FB
 		}
 	}
 
+
+	void CPassthrough::GetCompositionLayers( std::vector< XrCompositionLayerBaseHeader * > &outCompositionLayers, std::vector< uint32_t > &vecIndices, bool bReset )
+	{
+		if ( bReset )
+			outCompositionLayers.clear();
+		for ( auto index : vecIndices )
+		{
+			outCompositionLayers.push_back( reinterpret_cast< XrCompositionLayerBaseHeader * >( &( m_vecPassthroughLayers.at( index ).composition ) ) );
+		}
+	}
+
 	XrResult CPassthrough::SetPassThroughOpacity( SPassthroughLayer &refLayer, float fOpacity )
 	{
 		refLayer.style.textureOpacityFactor = fOpacity;

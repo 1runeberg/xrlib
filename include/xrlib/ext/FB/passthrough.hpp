@@ -33,7 +33,7 @@ namespace xrlib::FB
 			XrPassthroughStyleFB style { XR_TYPE_PASSTHROUGH_STYLE_FB };
 		};
 
-		CPassthrough( XrInstance xrInstance );
+		explicit CPassthrough( XrInstance xrInstance );
 		~CPassthrough();
 
 		// CPassthrough base functions
@@ -58,6 +58,7 @@ namespace xrlib::FB
 		XrResult ResumeLayer( int index = -1 ) override;
 
 		void GetCompositionLayers( std::vector< XrCompositionLayerBaseHeader * > &outCompositionLayers, bool bReset = true ) override;
+		void GetCompositionLayers( std::vector< XrCompositionLayerBaseHeader * > &outCompositionLayers, std::vector< uint32_t > &vecIndices, bool bReset = true ) override;
 
 		// FB CPassthrough additional capabilities
 		std::vector< SPassthroughLayer > *GetPassthroughLayers() { return &m_vecPassthroughLayers; }

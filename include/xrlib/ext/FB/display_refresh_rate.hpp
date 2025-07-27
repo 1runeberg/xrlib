@@ -22,7 +22,7 @@ namespace xrlib::FB
 	{
 	  public:
 
-		CDisplayRefreshRate( XrInstance xrInstance );
+		explicit CDisplayRefreshRate( XrInstance xrInstance );
 
 		/// <summary>
 		/// Retrieve all supported display refresh rates from the openxr runtime that is valid for the running session and hardware

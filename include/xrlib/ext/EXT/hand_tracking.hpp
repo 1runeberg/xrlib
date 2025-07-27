@@ -21,7 +21,7 @@ namespace xrlib::EXT
 	class CHandTracking : public CExtBase
 	{
 	  public:
-		CHandTracking( XrInstance xrInstance );
+		explicit CHandTracking( XrInstance xrInstance );
 		~CHandTracking();
 
 		XrResult Init( XrSession xrSession, 

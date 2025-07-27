@@ -36,7 +36,7 @@ namespace xrlib
 	class CPlane2D : public CRenderable
 	{
 	  public:
-		CPlane2D( 
+		CPlane2D(
 			CSession *pSession,
 			CRenderInfo *pRenderInfo,
 			uint16_t pipelineLayoutIdx,
@@ -191,6 +191,51 @@ namespace xrlib
 		std::vector< SColoredVertex > m_vecVertices;
 
 		void DeleteBuffers() override;
+	};
+
+	class CPlane : public CPrimitive
+	{
+	  public:
+		CPlane(
+			CSession *pSession,
+			CRenderInfo *pRenderInfo,
+			uint16_t pipelineLayoutIdx,
+			uint16_t graphicsPipelineIdx,
+			bool bFacePlayer = false,
+			uint32_t descriptorLayoutIdx = std::numeric_limits< uint32_t >::max(),
+			bool bIsVisible = true,
+			XrVector3f xrScale = { 1.f, 1.f, 1.f },
+			XrSpace xrSpace = XR_NULL_HANDLE );
+
+		CPlane( CSession *pSession, CRenderInfo *pRenderInfo, bool bFacePlayer = false, bool bIsVisible = true, XrVector3f xrScale = { 1.f, 1.f, 1.f }, XrSpace xrSpace = XR_NULL_HANDLE );
+
+		~CPlane();
+
+	  protected:
+		void InitShape( bool bFacePlayer = false );
+	};
+
+	class CColoredPlane : public CColoredPrimitive
+	{
+	  public:
+		CColoredPlane(
+			CSession *pSession,
+			CRenderInfo *pRenderInfo,
+			uint16_t pipelineLayoutIdx,
+			uint16_t graphicsPipelineIdx,
+			bool bFacePlayer = false,
+			uint32_t descriptorLayoutIdx = std::numeric_limits< uint32_t >::max(),
+			bool bIsVisible = true,
+			float fAlpha = 1.0f,
+			XrVector3f xrScale = { 1.f, 1.f, 1.f },
+			XrSpace xrSpace = XR_NULL_HANDLE );
+
+		CColoredPlane( CSession *pSession, CRenderInfo *pRenderInfo, bool bFacePlayer = false, bool bIsVisible = true, XrVector3f xrScale = { 1.f, 1.f, 1.f }, XrSpace xrSpace = XR_NULL_HANDLE, float fAlpha = 1.0f );
+
+		~CColoredPlane() {}
+
+	  private:
+		void InitShape( bool bFacePlayer = false, float fAlpha = 1.0f );
 	};
 
 	class CPyramid : public CPrimitive

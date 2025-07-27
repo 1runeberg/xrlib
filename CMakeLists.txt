@@ -19,7 +19,7 @@ set(CMAKE_SUPPRESS_REGENERATION true)
 
 # Set project variables
 set(XRLIB "xrlib")
-project("${XRLIB}" VERSION 0.2.0.0)
+project("${XRLIB}" VERSION 0.5.0.0)
 
 # Set project directories
 set(XRLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -87,6 +87,7 @@ file(GLOB_RECURSE XRVK_HEADERS
 # Set source code
 file(GLOB_RECURSE XRLIB_SOURCE
         "${XRLIB_SRC}/*.c*"
+        "${XRLIB_SRC}/{$XRLIB}/*.c*"
 	)
 
 file(GLOB_RECURSE XRVK_SOURCE
@@ -94,45 +95,30 @@ file(GLOB_RECURSE XRVK_SOURCE
 	)
 
 # Exclude extensions (option)
-option(EXCLUDE_KHR_VISIBILITY_MASK "EXCLUDE_KHR_VISIBILITY_MASK" OFF) 
-set(FILES_KHR_VISIBILITY_MASK "KHR/visibility_mask")
+macro(exclude_extension option_var file_name)
+    if(${option_var})
+        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${file_name}.hpp")
+        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${file_name}.cpp")
+    endif()
+endmacro()
 
-option(EXCLUDE_EXT_HAND_TRACKING "EXCLUDE_EXT_HAND_TRACKING" OFF) 
-set (FILES_EXT_HAND_TRACKING  "EXT/hand_tracking" )
-
-option(EXCLUDE_FB_DISPLAY_REFRESH "EXCLUDE_FB_DISPLAY_REFRESH" OFF) 
-set (FILES_FB_DISPLAY_REFRESH "FB/display_refresh_rate" )
-
+option(EXCLUDE_KHR_VISIBILITY_MASK "EXCLUDE_KHR_VISIBILITY_MASK" OFF)
+option(EXCLUDE_EXT_HAND_TRACKING "EXCLUDE_EXT_HAND_TRACKING" OFF)
+option(EXCLUDE_EXT_HAND_INTERACTION "EXCLUDE_EXT_HAND_INTERACTION" OFF)
+option(EXCLUDE_EXT_HAND_JOINTS_MOTION_RANGE "EXCLUDE_EXT_HAND_JOINTS_MOTION_RANGE" OFF)
+option(EXCLUDE_FB_DISPLAY_REFRESH "EXCLUDE_FB_DISPLAY_REFRESH" OFF)
 option(EXCLUDE_FB_PASSTHROUGH "EXCLUDE_FB_PASSTHROUGH" OFF) 
-set (FILES_FB_PASSTHROUGH "FB/passthrough" "FB/triangle_mesh")
+option(EXCLUDE_FB_TRIANGLE_MESH "EXCLUDE_FB_TRIANGLE_MESH" OFF)
+option(EXCLUDE_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS "EXCLUDE_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS" OFF)
 
-if (${EXCLUDE_KHR_VISIBILITY_MASK} STREQUAL "ON")
-    foreach( f IN ITEMS ${FILES_KHR_VISIBILITY_MASK} )
-        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp" )
-        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp" )
-    endforeach()
-endif()
-
-if (${EXCLUDE_EXT_HAND_TRACKING})
-    foreach(f IN ITEMS ${FILE_EXT_HAND_TRACKING})
-        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp")
-        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp")
-    endforeach()
-endif()
-
-if (${EXCLUDE_FB_DISPLAY_REFRESH})
-    foreach(f IN ITEMS ${FILES_FB_DISPLAY_REFRESH} )
-        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp")
-        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp")
-    endforeach()
-endif()
-
-if (${EXCLUDE_FB_PASSTHROUGH})
-    foreach(f IN ITEMS ${FILES_FB_PASSTHROUGH} )
-        list(REMOVE_ITEM XRLIB_HEADERS "${XRLIB_EXT_INCLUDE}/${f}.hpp")
-        list(REMOVE_ITEM XRLIB_SOURCE "${XRLIB_EXT_SRC}/${f}.cpp")
-    endforeach()
-endif()
+exclude_extension(EXCLUDE_KHR_VISIBILITY_MASK "KHR/visibility_mask")
+exclude_extension(EXCLUDE_EXT_HAND_TRACKING "EXT/hand_tracking")
+exclude_extension(EXCLUDE_EXT_HAND_INTERACTION "EXT/hand_interaction")
+exclude_extension(EXCLUDE_EXT_HAND_JOINTS_MOTION_RANGE "EXT/hand_joints_motion_range")
+exclude_extension(EXCLUDE_FB_DISPLAY_REFRESH "FB/display_refresh_rate")
+exclude_extension(EXCLUDE_FB_PASSTHROUGH "FB/passthrough")
+exclude_extension(EXCLUDE_FB_TRIANGLE_MESH "FB/triangle_mesh")
+exclude_extension(EXCLUDE_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS "META/simultaneous_hands_and_controllers")
 
 # Set shaders
 file(GLOB_RECURSE XRVK_SHADERS

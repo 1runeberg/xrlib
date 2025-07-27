@@ -16,7 +16,7 @@
 namespace xrlib
 {
 
-	CPlane2D::CPlane2D( 
+	CPlane2D::CPlane2D(
 		CSession *pSession,
 		CRenderInfo *pRenderInfo,
 		uint16_t pipelineLayoutIdx,
@@ -34,7 +34,7 @@ namespace xrlib
 	{
 	}
 
-	CPlane2D::~CPlane2D() 
+	CPlane2D::~CPlane2D()
 	{
 		Reset();
 		DeleteBuffers();
@@ -75,15 +75,15 @@ namespace xrlib
 		return VK_SUCCESS;
 	}
 
-	void CPlane2D::Draw( const VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo ) 
+	void CPlane2D::Draw( const VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo )
 	{
 		// Push constants
-		vkCmdPushConstants( 
-			commandBuffer, 
-			renderInfo.vecPipelineLayouts[ pipelineLayoutIndex ], 
-			VK_SHADER_STAGE_VERTEX_BIT, 
-			0, 
-			k_pcrSize, 
+		vkCmdPushConstants(
+			commandBuffer,
+			renderInfo.vecPipelineLayouts[ pipelineLayoutIndex ],
+			VK_SHADER_STAGE_VERTEX_BIT,
+			0,
+			k_pcrSize,
 			renderInfo.state.eyeVPs.data() );
 
 		// Set stencil reference
@@ -116,11 +116,11 @@ namespace xrlib
 		vkCmdDrawIndexed( commandBuffer, GetIndices()->size(), GetInstanceCount(), 0, 0, 0 );
 	}
 
-	void CPlane2D::AddTri( XrVector2f v1, XrVector2f v2, XrVector2f v3 ) 
+	void CPlane2D::AddTri( XrVector2f v1, XrVector2f v2, XrVector2f v3 )
 	{
 		AddVertex( v1 );
 		AddVertex( v2 );
-		AddVertex( v3 ); 
+		AddVertex( v3 );
 	}
 
 	void CPlane2D::AddIndex( unsigned short index ) { m_vecIndices.push_back( index ); }
@@ -129,7 +129,7 @@ namespace xrlib
 
 	void CPlane2D::ResetIndices() { m_vecIndices.clear(); }
 
-	void CPlane2D::ResetVertices() { m_vecVertices.clear(); } 
+	void CPlane2D::ResetVertices() { m_vecVertices.clear(); }
 
 	void CPlane2D::Reset()
 	{
@@ -503,6 +503,89 @@ namespace xrlib
 			delete m_pVertexBuffer;
 	}
 
+	CPlane::CPlane( CSession *pSession, CRenderInfo *pRenderInfo, uint16_t pipelineLayoutIdx, uint16_t graphicsPipelineIdx, bool bFacePlayer, uint32_t descriptorLayoutIdx, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace )
+		: CPrimitive( pSession, pRenderInfo, pipelineLayoutIdx, graphicsPipelineIdx, descriptorLayoutIdx, bIsVisible, xrScale, xrSpace )
+	{
+		InitShape( bFacePlayer );
+	}
+
+	CPlane::CPlane( CSession *pSession, CRenderInfo *pRenderInfo, bool bFacePlayer, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace )
+		: CPrimitive( pSession, pRenderInfo, 0, 0, std::numeric_limits< uint32_t >::max(), bIsVisible, xrScale, xrSpace )
+	{
+		InitShape( bFacePlayer );
+	}
+
+	void CPlane::InitShape( bool bFacePlayer )
+	{
+		m_vecVertices.clear();
+		m_vecIndices.clear();
+
+		if ( bFacePlayer )
+		{
+			// XY plane (Z=0), facing player (+Z)
+			m_vecVertices.push_back( { -0.5f, 0.5f, 0.0f } );  // top left
+			m_vecVertices.push_back( { 0.5f, 0.5f, 0.0f } );   // top right
+			m_vecVertices.push_back( { 0.5f, -0.5f, 0.0f } );  // bottom right
+			m_vecVertices.push_back( { -0.5f, -0.5f, 0.0f } ); // bottom left
+		}
+		else
+		{
+			// XZ plane (Y=0)
+			m_vecVertices.push_back( { -0.5f, 0.0f, -0.5f } ); // left, back
+			m_vecVertices.push_back( { 0.5f, 0.0f, -0.5f } );  // right, back
+			m_vecVertices.push_back( { 0.5f, 0.0f, 0.5f } );   // right, front
+			m_vecVertices.push_back( { -0.5f, 0.0f, 0.5f } );  // left, front
+		}
+
+		m_vecIndices = { 0, 1, 2, 2, 3, 0 };
+	}
+
+	CPlane::~CPlane()
+	{
+		Reset();
+		DeleteBuffers();
+	}
+
+	constexpr XrVector3f k_ColorWhite { 1.f, 1.f, 1.f };
+
+	CColoredPlane::
+		CColoredPlane( CSession *pSession, CRenderInfo *pRenderInfo, uint16_t pipelineLayoutIdx, uint16_t graphicsPipelineIdx, bool bFacePlayer, uint32_t descriptorLayoutIdx, bool bIsVisible, float fAlpha, XrVector3f xrScale, XrSpace xrSpace )
+		: CColoredPrimitive( pSession, pRenderInfo, pipelineLayoutIdx, graphicsPipelineIdx, descriptorLayoutIdx, bIsVisible, fAlpha, xrScale, xrSpace )
+	{
+		InitShape( bFacePlayer, fAlpha );
+	}
+
+	CColoredPlane::CColoredPlane( CSession *pSession, CRenderInfo *pRenderInfo, bool bFacePlayer, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace, float fAlpha )
+		: CColoredPrimitive( pSession, pRenderInfo, bIsVisible, xrScale, xrSpace, fAlpha )
+	{
+		InitShape( bFacePlayer, fAlpha );
+	}
+
+	void CColoredPlane::InitShape( bool bFacePlayer, float fAlpha )
+	{
+		m_vecVertices.clear();
+		m_vecIndices.clear();
+
+		if ( bFacePlayer )
+		{
+			// XY plane (Z=0), facing player (+Z)
+			AddColoredVertex( { -0.5f, 0.5f, 0.0f }, k_ColorWhite, fAlpha );  // top left
+			AddColoredVertex( { 0.5f, 0.5f, 0.0f }, k_ColorWhite, fAlpha );   // top right
+			AddColoredVertex( { 0.5f, -0.5f, 0.0f }, k_ColorWhite, fAlpha );  // bottom right
+			AddColoredVertex( { -0.5f, -0.5f, 0.0f }, k_ColorWhite, fAlpha ); // bottom left
+		}
+		else
+		{
+			// XZ plane (Y=0)
+			AddColoredVertex( { -0.5f, 0.0f, -0.5f }, k_ColorWhite, fAlpha ); // left, back
+			AddColoredVertex( { 0.5f, 0.0f, -0.5f }, k_ColorWhite, fAlpha );  // right, back
+			AddColoredVertex( { 0.5f, 0.0f, 0.5f }, k_ColorWhite, fAlpha );	  // right, front
+			AddColoredVertex( { -0.5f, 0.0f, 0.5f }, k_ColorWhite, fAlpha );  // left, front
+		}
+
+		m_vecIndices = { 0, 1, 2, 2, 3, 0 };
+	}
+
 	CPyramid::CPyramid(
 		CSession *pSession,
 		CRenderInfo *pRenderInfo,
@@ -617,8 +700,8 @@ namespace xrlib
 		AddColoredTri( LBB, LTB, LBF, k_ColorRed, fAlpha ); // left (port)
 		AddColoredTri( LBF, LTB, LTF, k_ColorRed, fAlpha );
 
-		AddColoredTri( RBF, RTB, RBB, k_ColorRed, fAlpha ); // right (starboard)
-		AddColoredTri( RTF, RTB, RBF, k_ColorRed, fAlpha );
+		AddColoredTri( RBF, RTB, RBB, k_ColorGreen, fAlpha ); // right (starboard)
+		AddColoredTri( RTF, RTB, RBF, k_ColorGreen, fAlpha );
 
 		AddColoredTri( RBF, LBB, LBF, k_ColorGold, fAlpha ); // bottom
 		AddColoredTri( RBB, LBB, RBF, k_ColorGold, fAlpha );
@@ -626,11 +709,11 @@ namespace xrlib
 		AddColoredTri( RTF, LTB, RTB, k_ColorTeal, fAlpha ); // top
 		AddColoredTri( LTF, LTB, RTF, k_ColorTeal, fAlpha );
 
-		AddColoredTri( RTB, LBB, RBB, k_ColorPurple, fAlpha ); // back
-		AddColoredTri( LTB, LBB, RTB, k_ColorPurple, fAlpha );
+		AddColoredTri( RTB, LBB, RBB, k_ColorBlue, fAlpha ); // front
+		AddColoredTri( LTB, LBB, RTB, k_ColorBlue, fAlpha );
 
-		AddColoredTri( RTF, LBF, LTF, k_ColorBlue, fAlpha ); // front
-		AddColoredTri( RBF, LBF, RTF, k_ColorBlue, fAlpha );
+		AddColoredTri( RTF, LBF, LTF, k_ColorPurple, fAlpha ); // back
+		AddColoredTri( RBF, LBF, RTF, k_ColorPurple, fAlpha );
 
 		// Add indices
 		// @todo

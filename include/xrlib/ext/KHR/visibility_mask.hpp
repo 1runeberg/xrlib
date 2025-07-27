@@ -27,13 +27,13 @@ namespace xrlib::KHR
 		/// Constructor
 		/// </summary>
 		/// <param name="xrInstance">Currently active openxr instance</param>
-		CVisibilityMask( XrInstance xrInstance );
+		explicit CVisibilityMask( XrInstance xrInstance );
 
 
 		/// <summary>
 		/// Destructor
 		/// </summary>
-		~CVisibilityMask() {}
+		~CVisibilityMask() = default;
 
 
 		/// <summary>

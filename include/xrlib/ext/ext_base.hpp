@@ -12,17 +12,17 @@
 
 #pragma once
 
-#include <assert.h>
+#include <cassert>
 #include <string>
 
-#include <openxr/openxr.h>
+#include <xrlib/common.hpp>
 
 namespace xrlib
 {
 	class CExtBase
 	{
 	  public:
-		CExtBase( XrInstance xrInstance, std::string sName ) : 
+		CExtBase( XrInstance xrInstance, const std::string& sName ) :
 			m_xrInstance( xrInstance ),
 			m_sName( sName )
 		{
@@ -30,7 +30,7 @@ namespace xrlib
 			assert( !sName.empty() );
 		}
 
-		~CExtBase() {};
+		~CExtBase() = default;
 
 		std::string GetName() { return m_sName; }
 

@@ -87,21 +87,21 @@ namespace xrlib
 	using InputComponent = Controller::Component;
 	using InputQualifier = Controller::Qualifier;
 
-	struct HTCVive : Controller
+	struct HTCVive : public Controller
 	{
 		const char *Path() override { return "/interaction_profiles/htc/vive_controller"; }
 		XrResult AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier ) override;
 		XrResult SuggestBindings(XrInstance xrInstance, void* pOtherInfo) override { return SuggestControllerBindings(xrInstance, pOtherInfo); };
 	};
 
-	struct MicrosoftMixedReality : Controller
+	struct MicrosoftMixedReality : public Controller
 	{
 		const char *Path() override { return "/interaction_profiles/microsoft/motion_controller"; }
 		XrResult AddBinding(XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier) override;
 		XrResult SuggestBindings( XrInstance xrInstance, void *pOtherInfo ) override { return SuggestControllerBindings( xrInstance, pOtherInfo ); };
 	};
 
-	struct OculusTouch : Controller
+	struct OculusTouch : public Controller
 	{
 		const char *Path() override { return "/interaction_profiles/oculus/touch_controller"; }
 		XrResult AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier ) override;
@@ -115,13 +115,11 @@ namespace xrlib
 		XrResult SuggestBindings( XrInstance xrInstance, void *pOtherInfo ) override { return SuggestControllerBindings( xrInstance, pOtherInfo ); };
 	};
 
-	struct BaseController : Controller
+	struct BaseController
 	{
 	  public:
-		const char *Path() override { return "base"; }
-
 		XrResult xrResult = XR_SUCCESS;
-		XrResult AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier ) override
+		XrResult AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier )
 		{
 			for ( auto &interactionProfile : vecSupportedControllers )
 			{
@@ -134,11 +132,24 @@ namespace xrlib
 			return XR_SUCCESS;
 		}
 
-		XrResult SuggestBindings( XrInstance xrInstance, void *pOtherInfo ) override
+		XrResult SuggestBindings( XrInstance xrInstance, void *pOtherInfo )
 		{
 			for ( auto &interactionProfile : vecSupportedControllers )
 			{
 				xrResult = interactionProfile->SuggestBindings( xrInstance, pOtherInfo );
+
+				if ( !XR_UNQUALIFIED_SUCCESS( xrResult ) )
+					LogWarning( "BaseController::SuggestBindings", "Error suggesting bindings for interaction profile %s: %s", interactionProfile->Path(), XrEnumToString( xrResult ) );
+			}
+
+			return XR_SUCCESS;
+		}
+
+		XrResult AddBinding( XrInstance xrInstance, XrAction action, std::string &sFullBindingPath )
+		{
+			for ( auto &interactionProfile : vecSupportedControllers )
+			{
+				xrResult = interactionProfile->AddBinding( xrInstance, action, sFullBindingPath );
 
 				if ( !XR_UNQUALIFIED_SUCCESS( xrResult ) )
 					return xrResult;
