@@ -53,6 +53,7 @@ namespace xrlib
 			void *pVkLogicalDeviceNext = nullptr,
 			void *pXrLogicalDeviceNext = nullptr );
 
+		XrResult RequestExit();
 		XrResult InitVulkan( VkSurfaceKHR *pSurface = nullptr, void *pVkInstanceNext = nullptr, void *pXrVkInstanceNext = nullptr, void *pVkLogicalDeviceNext = nullptr, void *pXrLogicalDeviceNext = nullptr );
 		XrResult CreateXrSession( XrSessionCreateFlags flgAdditionalCreateInfo = 0, void *pNext = nullptr );
 		XrResult CreateAppSpace( XrPosef referencePose, XrReferenceSpaceType referenceSpaceType, void *pNext = nullptr );

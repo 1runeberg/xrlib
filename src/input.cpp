@@ -100,7 +100,7 @@ namespace xrlib
 		std::strncpy( xrActionCreateInfo.localizedActionName, sLocalizedName.c_str(), XR_MAX_LOCALIZED_ACTION_SET_NAME_SIZE );
 		xrActionCreateInfo.actionType = xrActionType;
 
-		uint32_t unSubpathsCount = static_cast< uint32_t >( vecSubactionpaths.size() );
+		auto unSubpathsCount = static_cast< uint32_t >( vecSubactionpaths.size() );
 		if ( unSubpathsCount > 0 )
 		{
 			xrActionCreateInfo.countSubactionPaths = unSubpathsCount;
@@ -311,6 +311,22 @@ namespace xrlib
 	}
 
 	XrResult CInput::SuggestBindings( Controller *controller, void *pOtherInfo ) { return controller->SuggestBindings( m_pInstance->GetXrInstance(), pOtherInfo ); }
+
+	XrResult CInput::AddBinding( BaseController *controller, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier )
+	{
+		assert( controller );
+
+		return controller->AddBinding( m_pInstance->GetXrInstance(), action, hand, component, qualifier );
+	}
+
+	XrResult CInput::AddBinding( BaseController *controller, XrAction action, std::string sFullBindingPath )
+	{
+		assert( controller );
+
+		return controller->AddBinding( m_pInstance->GetXrInstance(), action, sFullBindingPath );
+	}
+
+	XrResult CInput::SuggestBindings( BaseController *controller, void *pOtherInfo ) { return controller->SuggestBindings( m_pInstance->GetXrInstance(), pOtherInfo ); }
 
 	XrResult CInput::StringToXrPath( const char *string, XrPath *xrPath )
 	{

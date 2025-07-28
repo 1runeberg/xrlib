@@ -46,8 +46,8 @@ namespace xrlib::FB
 		XrTriangleMeshCreateInfoFB xrMeshCI = { XR_TYPE_TRIANGLE_MESH_CREATE_INFO_FB };
 		xrMeshCI.flags = flags;	
 		xrMeshCI.next = pOtherInfo;
-        xrMeshCI.triangleCount = vecVertices.size();
-        xrMeshCI.vertexCount = xrMeshCI.triangleCount * 3;
+        xrMeshCI.vertexCount = vecVertices.size();
+		xrMeshCI.triangleCount = vecIndices.size() / 3;
 
 		// Set mesh buffer data
 		if ( flags & XR_TRIANGLE_MESH_MUTABLE_BIT_FB )
@@ -58,7 +58,7 @@ namespace xrlib::FB
 		else
 		{
 			xrMeshCI.vertexBuffer = vecVertices.data();
-			xrMeshCI.triangleCount = vecVertices.size();
+			xrMeshCI.indexBuffer = vecIndices.data();
 		}
 
 		// Create triangle mesh

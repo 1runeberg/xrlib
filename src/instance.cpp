@@ -12,6 +12,7 @@
 
 
 
+#include <ranges>
 #include <xrlib/instance.hpp>
 #include <xrlib/utility_functions.hpp>
 
@@ -48,8 +49,15 @@ namespace xrlib
 			xrDestroyInstance( m_xrInstance );
 
 		#ifdef XR_USE_PLATFORM_ANDROID
-		m_pAndroidApp->activity->vm->DetachCurrentThread();
-		#endif
+		JNIEnv *env = nullptr;
+		if ( m_pAndroidApp && m_pAndroidApp->activity && m_pAndroidApp->activity->vm )
+		{
+			if ( m_pAndroidApp->activity->vm->GetEnv( reinterpret_cast< void ** >( &env ), JNI_VERSION_1_6 ) == JNI_OK )
+			{
+				m_pAndroidApp->activity->vm->DetachCurrentThread();
+			}
+		}
+#endif
 	}
 
 	XrResult CInstance::Init(
@@ -473,7 +481,7 @@ namespace xrlib
 		}
 	}
 
-	const XrSystemProperties *CInstance::GetXrSystemProperties( bool bUpdate, void *pNext ) 
+	const XrSystemProperties *CInstance::GetXrSystemProperties( bool bUpdate, void *pNext, bool bResetNextChain )
 	{ 
 		assert( m_xrInstance != XR_NULL_HANDLE );
 		assert( m_xrSystemId != XR_NULL_SYSTEM_ID );
@@ -486,7 +494,33 @@ namespace xrlib
 				LogWarning( "", "Error updating user's system info (%s)", XrEnumToString( xrResult ) );
 		}
 
+		// Some runtimes appear to reset this to nullptr, so defensively setting it back here.
+		m_xrSystemProperties.next =  bResetNextChain ? nullptr : pNext;
+
 		return &m_xrSystemProperties;
+	}
+
+	void CInstance::ResetXrSystemPropertyNextChain( bool bClearMemory )
+	{
+		if ( !bClearMemory )
+			m_xrSystemProperties.next = nullptr;
+
+		if( !m_xrSystemProperties.next )
+			return;
+
+		// Cache next chain for deletion
+		std::vector< XrBaseOutStructure * > nodes;
+		auto *pCurrent = reinterpret_cast< XrBaseOutStructure * >( m_xrSystemProperties.next );
+		while ( pCurrent )
+		{
+			nodes.push_back( pCurrent );
+			pCurrent = pCurrent->next;
+		}
+
+		// Delete nodes from end of the chain
+		for ( auto &node : std::ranges::reverse_view( nodes ) )
+			delete node;
+
 	}
 
 }

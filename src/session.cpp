@@ -567,5 +567,28 @@ namespace xrlib
 		if ( m_xrHmdLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT )
 			outPose.orientation = m_xrHmdLocation.pose.orientation;
 	}
+
+	XrResult CSession::RequestExit()
+	{
+		XrResult xrResult = XR_SUCCESS;
+		if ( m_xrSession != XR_NULL_HANDLE )
+		{
+			xrResult = xrRequestExitSession( m_xrSession );
+			if ( !XR_UNQUALIFIED_SUCCESS( xrResult ) )
+			{
+				LogError( "CSession::RequestExit", "Error requesting runtime to end session: %s", XrEnumToString( xrResult ) );
+			}
+			else
+			{
+				LogInfo( "CSession::RequestExit", "OpenXR session exit requested." );
+			}
+		}
+		else
+		{
+			LogWarning( "CSession::RequestExit", "OpenXR session is not initialized, cannot request exit." );
+		}
+
+		return xrResult;
+	}
 }
 

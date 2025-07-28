@@ -20,7 +20,7 @@ namespace xrlib::FB
 	class CTriangleMesh : public CExtBase
 	{
 	  public:
-		CTriangleMesh( XrInstance xrInstance );
+		explicit CTriangleMesh( XrInstance xrInstance );
 		~CTriangleMesh();
 
 		std::vector< XrTriangleMeshFB > *GetMeshes() { return &m_vecMeshes; }

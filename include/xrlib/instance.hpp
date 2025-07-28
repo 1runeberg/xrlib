@@ -27,7 +27,7 @@ namespace xrlib
 	{
 	  public:
 		#ifdef XR_USE_PLATFORM_ANDROID
-			CInstance( struct android_app *pAndroidApp, const std::string &sAppName, const XrVersion32 unAppVersion, const ELogLevel eMinLogLevel = ELogLevel::LogVerbose );
+			CInstance( struct android_app *pAndroidApp, const std::string &sAppName, XrVersion32 unAppVersion, ELogLevel eMinLogLevel = ELogLevel::LogVerbose );
 		#else
 			CInstance( const std::string &sAppName, const XrVersion32 unAppVersion, const ELogLevel eMinLogLevel = ELogLevel::LogVerbose );
 		#endif
@@ -37,18 +37,18 @@ namespace xrlib
 		XrResult Init( 
 			std::vector< const char * > &vecInstanceExtensions, 
 			std::vector< const char * > &vecAPILayers,
-			const XrInstanceCreateFlags createFlags = 0,
+			XrInstanceCreateFlags createFlags = 0,
 			const void *pNext = nullptr	);
 
 		bool IsApiLayerEnabled( std::string &sApiLayerName );
 
+        bool IsExtensionEnabled( const char *extensionName );
+
+        bool IsExtensionEnabled( std::string &sExtensionName );
+
 		XrResult GetSupportedApiLayers( std::vector< XrApiLayerProperties > &vecApiLayers );
 
 		XrResult GetSupportedApiLayers( std::vector< std::string > &vecApiLayers );
-
-		bool IsExtensionEnabled( const char *extensionName );
-
-		bool IsExtensionEnabled( std::string &sExtensionName );
 
 		XrResult GetSupportedExtensions( std::vector< XrExtensionProperties > &outExtensions, const char *pcharApiLayerName = nullptr );
 
@@ -70,21 +70,23 @@ namespace xrlib
 
 		const char *GetAppName() { return m_sAppName.c_str(); }
 
-		const XrVersion32 GetAppVersion() { return m_unAppVersion; }
+		[[nodiscard]] XrVersion32 GetAppVersion() const { return m_unAppVersion; }
 
-		const XrInstance GetXrInstance() { return m_xrInstance; }
+        [[nodiscard]] XrSystemId GetXrSystemId() const { return m_xrSystemId; }
 
 		const XrInstanceProperties *GetXrInstanceProperties() { return &m_xrInstanceProperties; }
 
-		const XrSystemId GetXrSystemId() { return m_xrSystemId; }
+		const XrSystemProperties *GetXrSystemProperties( bool bUpdate = false, void *pNext = nullptr, bool bResetNextChain = true );
 
-		const XrSystemProperties *GetXrSystemProperties( bool bUpdate = false, void *pNext = nullptr );
+		void ResetXrSystemPropertyNextChain( bool bClearMemory = false);
 
 		const std::vector< std::string > &GetEnabledApiLayers() { return m_vecEnabledApiLayers; }
 
 		const std::vector< std::string > &GetEnabledExtensions() { return m_vecEnabledExtensions; }
 
-		const ELogLevel GetMinLogLevel() { return m_eMinLogLevel; }
+        XrInstance GetXrInstance() { return m_xrInstance; }
+
+        ELogLevel GetMinLogLevel() { return m_eMinLogLevel; }
 
 
 		#ifdef XR_USE_PLATFORM_ANDROID

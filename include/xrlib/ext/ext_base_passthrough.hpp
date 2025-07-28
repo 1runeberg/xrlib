@@ -17,7 +17,6 @@
 #include <xrlib/instance.hpp>
 #include <xrlib/data_types_bitmasks.hpp>
 
-#include <assert.h>
 #include <string>
 #include <vector>
 
@@ -42,9 +41,9 @@ namespace xrlib
 
 		Flag8 flagSupportedLayerTypes { 0 };
 
-		ExtBase_Passthrough( XrInstance xrInstance, std::string sName ) : CExtBase ( xrInstance, sName ) {};
-		~ExtBase_Passthrough() {};
-		bool IsActive() { return m_bIsActive; }
+		ExtBase_Passthrough( XrInstance xrInstance, const std::string& sName ) : CExtBase ( xrInstance, sName ) {};
+		~ExtBase_Passthrough() = default;
+		bool IsActive() const { return m_bIsActive; }
 
 		virtual XrResult Init( XrSession xrSession, CInstance *pInstance, void *pOtherInfo = nullptr ) = 0;
 		virtual XrResult Start() = 0;
@@ -58,6 +57,7 @@ namespace xrlib
 		virtual XrResult RemoveLayer( uint32_t unIndex ) = 0;
 		
 		virtual void GetCompositionLayers( std::vector< XrCompositionLayerBaseHeader * > &outCompositionLayers, bool bReset = true ) = 0;
+		virtual void GetCompositionLayers( std::vector< XrCompositionLayerBaseHeader * > &outCompositionLayers, std::vector< uint32_t > &vecIndices, bool bReset = true ) = 0;
 
 	protected:
 		bool m_bIsActive = false;
