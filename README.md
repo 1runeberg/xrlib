@@ -15,7 +15,7 @@ Explore xrlib's capabilities through a collection of example applications availa
 - [passthroughxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-03_passthroughxr) - Meta Quest Passthrough implementation 
 - [handtrackingxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-04_handtrackingxr) - Hand tracking visualization
 - [inputxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-05_inputxr) - Full-featured input handling, multi-threading via xrlib's xr dynamic thread pool manager, and PBR rendering
-- [interactionsxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-05_interactionsxr) - Demonstrates the EXT Hand Interaction extension, including passthrough and simultaneous hand/controller tracking, and system properties querying.
+- [interactionsxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-06_interactionsxr) - Demonstrates the EXT Hand Interaction extension, including passthrough and simultaneous hand/controller tracking, and system properties querying.
 
 Each demo provides clear, practical implementation examples designed to highlight specific xrlib features. Desktop (Windows, Linux) and Android builds are supported for all demos.
 
