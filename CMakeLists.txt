@@ -19,7 +19,7 @@ set(CMAKE_SUPPRESS_REGENERATION true)
 
 # Set project variables
 set(XRLIB "xrlib")
-project("${XRLIB}" VERSION 0.5.0.0)
+project("${XRLIB}" VERSION 0.5.1.0)
 
 # Set project directories
 set(XRLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")

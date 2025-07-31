@@ -18,6 +18,7 @@
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_ENABLE_WEBP
 #include <tinygltf/tiny_gltf.h>
 
 #if defined( _WIN32 ) && defined( RENDERDOC_ENABLE )
