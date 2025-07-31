@@ -220,6 +220,11 @@ endif()
 # BUILD THIRD PARTY DEPENDENCIES #
 ##################################
 
+# Add openxr
+set(BUILD_WITH_SYSTEM_JSONCPP OFF)
+add_subdirectory(${OPENXR_ROOT})
+message(STATUS "[${XRLIB}] OpenXR library loaded: ${OPENXR_ROOT} with jsconcpp: ${BUILD_WITH_SYSTEM_JSONCPP}")
+
 # Add cmake known packages
 find_package(Vulkan)
 if(NOT Vulkan_FOUND)
@@ -228,8 +233,7 @@ else()
 	message(STATUS "[${XRLIB}] Vulkan library loaded: ${Vulkan_LIBRARY}")
 endif()
 
-# Add openxr
-add_subdirectory(${OPENXR_ROOT})
+
 
 # Add TinyGLTF
 set(TINYGLTF_USE_CPP14 ON CACHE INTERNAL "" FORCE)
