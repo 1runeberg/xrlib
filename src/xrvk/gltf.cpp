@@ -137,6 +137,10 @@ namespace xrlib
 		}
 		#endif
 
+		// Debug: Log disk read performance
+		//std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+		//LogDebug( "CGltf::LoadFromDisk", "Started loading gltf file: %s", sFilename.c_str() );
+
 		// Load gltf file based on extension
 		if ( file.extension() == ".glb" )
 		{
@@ -170,6 +174,11 @@ namespace xrlib
 		{
 			outRenderModel->instances[ i ].scale = scale;
 		}
+
+		// Debug: Log disk read performance
+		//std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+		//std::chrono::duration< double > duration = end - start;
+		//LogDebug( "CGltf::LoadFromDisk", "Finished loading gltf file: %s in %.4f seconds", sFilename.c_str(), duration.count() );
 
 		return true; 
 	}
