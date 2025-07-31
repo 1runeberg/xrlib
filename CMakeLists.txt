@@ -229,9 +229,7 @@ else()
 endif()
 
 # Add openxr
-set(JSONCPP_FOUND OFF CACHE BOOL "Force BUILD_WITH_SYSTEM_JSONCPP to OFF" FORCE)
 add_subdirectory(${OPENXR_ROOT})
-message(STATUS "[${XRLIB}] OpenXR library loaded: ${OPENXR_ROOT} with jsconcpp: ${BUILD_WITH_SYSTEM_JSONCPP}")
 
 # Add TinyGLTF
 set(TINYGLTF_USE_CPP14 ON CACHE INTERNAL "" FORCE)
