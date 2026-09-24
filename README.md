@@ -32,11 +32,18 @@ Each demo provides clear, practical implementation examples designed to highligh
 2. Optional Tools
     - RenderDoc (if building with debug features)
 
+### Third-party dependencies
+
+- [OpenXR SDK](https://github.com/KhronosGroup/OpenXR-SDK) - OpenXR headers and runtime loader for xrlib.
+- [TinyGLTF](https://github.com/syoyo/tinygltf) - glTF model loading for xrvk.
+- [nlohmann/json](https://github.com/nlohmann/json) - glTF JSON parsing for xrvk.
+- [stb](https://github.com/nothings/stb) - Texture image loading for xrvk.
+
 ### Building the Library
 
 1. Clone the Repository
     ```bash
-    git clone [repository-url]
+    git clone --recurse-submodules https://github.com/1runeberg/xrlib.git
     cd xrlib
     ```
 
@@ -98,7 +105,11 @@ Additional requirements:
     cd build
 
     # Configure with CMake (adjust paths as needed)
-    cmake .. -DANDROID=ON -DANDROID_NDK=/path/to/ndk
+    cmake .. \
+        -DCMAKE_TOOLCHAIN_FILE=/path/to/ndk/build/cmake/android.toolchain.cmake \
+        -DANDROID_ABI=arm64-v8a \
+        -DANDROID_PLATFORM=33 \
+        -DCMAKE_BUILD_TYPE=Release
 
     # Build
     cmake --build .
