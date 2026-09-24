@@ -98,7 +98,7 @@ jobs:
                 mkdir ${{ github.ref_name }}_xrlib_source
                 mkdir ${{ github.ref_name }}_xrlib_include
          
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-source
                 path: ${{ github.ref_name }}_xrlib_source
@@ -110,12 +110,12 @@ jobs:
                 cp -r ./${{ github.ref_name }}_xrlib_source/third_party/openxr/include/openxr ./${{ github.ref_name }}_xrlib_include
                 cp ./${{ github.ref_name }}_xrlib_source/third_party/openxr/LICENSE ./${{ github.ref_name }}_xrlib_include/openxr
 
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: xrlib-${{ github.ref_name }}-INCLUDE
                 path: ./${{ github.ref_name }}_xrlib_include
 
-            - uses: geekyeggo/delete-artifact@v5
+            - uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
               with:
                 name: xrlib-source
                 failOnError: false
@@ -132,37 +132,37 @@ jobs:
                 mkdir ${{ github.ref_name }}_xrlib_binaries_windows-static/with_renderer
                 mkdir ${{ github.ref_name }}_xrlib_binaries_windows-static/no_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-windows-latest_compiler_cl_static_OFF-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-shared/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-windows-latest_compiler_cl_static_OFF-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-shared/no_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-windows-latest_compiler_cl_static_ON-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-static/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-windows-latest_compiler_cl_static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-static/no_renderer
               
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: xrlib_${{ github.ref_name }}-windows-shared-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_windows-shared
 
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: xrlib_${{ github.ref_name }}-windows-static-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_windows-static
 
-            - uses: geekyeggo/delete-artifact@v5
+            - uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
               with:
                 name: xrlib-windows-latest_*
                 failOnError: false
@@ -188,59 +188,59 @@ jobs:
                 mkdir ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/clang/no_renderer
 
             # Assemble all shared libraries
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_OFF-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/gnu/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_OFF-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/gnu/no_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_OFF-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/clang/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_OFF-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/clang/no_renderer
             
             # Assemble all static libraries
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_ON-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/gnu/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/gnu/no_renderer
               
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_ON-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/clang/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/clang/no_renderer
 
             # Upload finalized library compilations
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: xrlib_${{ github.ref_name }}-ubuntu-shared-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_ubuntu-shared
 
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: xrlib_${{ github.ref_name }}-ubuntu-static-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_ubuntu-static
 
-            - uses: geekyeggo/delete-artifact@v5
+            - uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
               with:
                 name: xrlib-ubuntu-latest_*
                 failOnError: false
