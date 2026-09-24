@@ -87,12 +87,14 @@ file(GLOB_RECURSE XRVK_HEADERS
 # Set source code
 file(GLOB_RECURSE XRLIB_SOURCE
         "${XRLIB_SRC}/*.c*"
-        "${XRLIB_SRC}/{$XRLIB}/*.c*"
 	)
 
 file(GLOB_RECURSE XRVK_SOURCE
         "${XRVK_SRC}/*.c*"
 	)
+
+# Keep the optional renderer out of the core source list.
+list(REMOVE_ITEM XRLIB_SOURCE ${XRVK_SOURCE})
 
 # Exclude extensions (option)
 macro(exclude_extension option_var file_name)
@@ -136,6 +138,7 @@ file(GLOB_RECURSE XRVK_SHADERS_INCLUDE
 
 # Compile shaders
 if(NOT ANDROID AND BUILD_SHADERS)
+    find_program(XRVK_GLSLC NAMES glslc HINTS "$ENV{VULKAN_SDK}/bin" REQUIRED)
     set(SHADER_OUTPUT_FILES)
     foreach(SHADER ${XRVK_SHADERS})
         # Get the filename with extension
@@ -147,10 +150,10 @@ if(NOT ANDROID AND BUILD_SHADERS)
         # Add custom command to run glslc for each shader file
         add_custom_command(
             OUTPUT ${OUTPUT_FILE}
-            COMMAND glslc ${SHADER} -o ${OUTPUT_FILE}
+            COMMAND "${XRVK_GLSLC}" ${SHADER} -o ${OUTPUT_FILE}
             COMMENT "Compiling ${SHADER} to ${OUTPUT_FILE}"
             VERBATIM
-            DEPENDS ${SHADER}  # Check if the shader file has changed
+            DEPENDS ${SHADER} ${XRVK_SHADERS_INCLUDE}
         )
 
         # Collect all output files
@@ -190,16 +193,6 @@ endif()
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   add_definitions(-D_WIN32)
   set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS True)
-endif()
-
-# Debug settings
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    # Assertions enabled
-    message(STATUS "[${XRLIB}] Debug build: Assertions enabled.")
-else()
-    # Disable assertions by defining NDEBUG
-    add_definitions(-DNDEBUG)
-    message(STATUS "[${XRLIB}] Release build: Assertions disabled.")
 endif()
 
 # Advanced debug options (desktop only)
@@ -293,6 +286,9 @@ else()
     add_library(${XRLIB} SHARED ${ALLSOURCE})
     message(STATUS "[${XRLIB}] Project library defined. Will build as: SHARED")
 endif()
+
+# Keep assertions enabled for Debug, including multi-config generators.
+target_compile_definitions(${XRLIB} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
 
 # For shared library builds, set project version
 if(NOT BUILD_AS_STATIC)
@@ -392,9 +388,7 @@ add_custom_command(TARGET ${XRLIB} POST_BUILD
                   )
 
                   
-# Compile shaders only if we're not in an android build
+# Build shaders as a dependency rather than starting a nested build.
 if(NOT ANDROID AND BUILD_SHADERS)
-    add_custom_command(TARGET ${XRLIB} POST_BUILD
-                            COMMAND ${CMAKE_COMMAND} --build . --target _compile_shaders
-                      )
+    add_dependencies(${XRLIB} _compile_shaders)
 endif()
