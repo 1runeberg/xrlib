@@ -221,6 +221,9 @@ else()
 	message(STATUS "[${XRLIB}] Vulkan library loaded: ${Vulkan_LIBRARY}")
 endif()
 
+# Keep JsonCpp embedded when incorporating the OpenXR loader objects (Monado).
+set(BUILD_WITH_SYSTEM_JSONCPP OFF CACHE BOOL "Use bundled JsonCpp for the OpenXR loader" FORCE)
+
 # Add openxr
 add_subdirectory(${OPENXR_ROOT})
 
