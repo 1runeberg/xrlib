@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -243,7 +243,7 @@ namespace vkutils
 		vkGetPhysicalDeviceProperties( physicalDevice, &properties );
 
 		// Align to both Vulkan's preferred copy offset and all supported texel sizes
-		const VkDeviceSize alignment = std::lcm( VkDeviceSize( 24 ), std::max( VkDeviceSize( 4 ), properties.limits.optimalBufferCopyOffsetAlignment ) );
+		const VkDeviceSize alignment = std::lcm( VkDeviceSize( 24 ), ( std::max )( VkDeviceSize( 4 ), properties.limits.optimalBufferCopyOffsetAlignment ) );
 		std::vector< VkDeviceSize > offsets;
 		offsets.reserve( images.size() );
 
@@ -301,8 +301,8 @@ namespace vkutils
 				if ( level + 1 < levels && width == 1 && height == 1 )
 					return VK_ERROR_INITIALIZATION_FAILED;
 
-				width = std::max( 1u, width / 2 );
-				height = std::max( 1u, height / 2 );
+				width = ( std::max )( 1u, width / 2 );
+				height = ( std::max )( 1u, height / 2 );
 			}
 
 			if ( size > UINT64_MAX - alignment || image.data.size() > UINT64_MAX - size - alignment )
@@ -367,8 +367,8 @@ namespace vkutils
 				copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
 				copy.imageExtent = { width, height, 1 };
 
-				width = std::max( 1u, width / 2 );
-				height = std::max( 1u, height / 2 );
+				width = ( std::max )( 1u, width / 2 );
+				height = ( std::max )( 1u, height / 2 );
 			}
 
 			vkCmdCopyBufferToImage( resources.commands, resources.buffer, images[ i ].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast< uint32_t >( copies.size() ), copies.data() );

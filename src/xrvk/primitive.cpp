@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -30,7 +30,7 @@ namespace xrlib
 	}
 
 	CPlane2D::CPlane2D( CSession *pSession, CRenderInfo *pRenderInfo, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace )
-		: CRenderable( pSession, pRenderInfo, 0, 0, std::numeric_limits< uint32_t >::max(), bIsVisible, xrScale, xrSpace )
+		: CRenderable( pSession, pRenderInfo, 0, 0, ( std::numeric_limits< uint32_t >::max )(), bIsVisible, xrScale, xrSpace )
 	{
 	}
 
@@ -160,7 +160,7 @@ namespace xrlib
 	}
 
 	CPrimitive::CPrimitive( CSession *pSession, CRenderInfo *pRenderInfo, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace ) : 
-		CRenderable( pSession, pRenderInfo, 0, 0, std::numeric_limits< uint32_t >::max(), bIsVisible, xrScale, xrSpace )
+		CRenderable( pSession, pRenderInfo, 0, 0, ( std::numeric_limits< uint32_t >::max )(), bIsVisible, xrScale, xrSpace )
 	{
 	}
 
@@ -334,7 +334,7 @@ namespace xrlib
 	}
 
 	CColoredPrimitive::CColoredPrimitive( CSession *pSession, CRenderInfo *pRenderInfo, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace, float fAlpha )
-		: CRenderable( pSession, pRenderInfo, 0, 0, std::numeric_limits< uint32_t >::max(), bIsVisible, xrScale, xrSpace ) 
+		: CRenderable( pSession, pRenderInfo, 0, 0, ( std::numeric_limits< uint32_t >::max )(), bIsVisible, xrScale, xrSpace )
 	{
 	}
 
@@ -510,7 +510,7 @@ namespace xrlib
 	}
 
 	CPlane::CPlane( CSession *pSession, CRenderInfo *pRenderInfo, bool bFacePlayer, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace )
-		: CPrimitive( pSession, pRenderInfo, 0, 0, std::numeric_limits< uint32_t >::max(), bIsVisible, xrScale, xrSpace )
+		: CPrimitive( pSession, pRenderInfo, 0, 0, ( std::numeric_limits< uint32_t >::max )(), bIsVisible, xrScale, xrSpace )
 	{
 		InitShape( bFacePlayer );
 	}
@@ -601,7 +601,7 @@ namespace xrlib
 	}
 
 	CPyramid::CPyramid( CSession *pSession, CRenderInfo *pRenderInfo, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace ) : 
-		CPrimitive( pSession, pRenderInfo, 0, 0, std::numeric_limits< uint32_t >::max(), bIsVisible, xrScale, xrSpace )
+		CPrimitive( pSession, pRenderInfo, 0, 0, ( std::numeric_limits< uint32_t >::max )(), bIsVisible, xrScale, xrSpace )
 	{
 		InitShape();
 	}
