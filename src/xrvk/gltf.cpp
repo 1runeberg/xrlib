@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -53,7 +53,7 @@ namespace xrlib
 
 	static bool DecodeImage( SGltfImage &outImage, std::span< const std::byte > bytes )
 	{
-		if ( bytes.empty() || bytes.size() > static_cast< size_t >( std::numeric_limits< int >::max() ) )
+		if ( bytes.empty() || bytes.size() > static_cast< size_t >( ( std::numeric_limits< int >::max )() ) )
 			return false;
 
 		const auto *pBytes = reinterpret_cast< const stbi_uc * >( bytes.data() );
@@ -102,7 +102,7 @@ namespace xrlib
 		if ( ( format != VK_FORMAT_R8G8B8A8_UNORM && format != VK_FORMAT_R8G8B8A8_SRGB && !wide ) || Read( 16 ) != ( wide ? 2 : 1 ) || !width || !height || width > INT_MAX || height > INT_MAX || Read( 28 ) || Read( 32 ) || Read( 36 ) != 1 ||
 			 Read( 44 ) || !levels || levels > 32 || !InBounds( 80, levels * 24 ) || Read( 64, 8 ) || Read( 72, 8 ) )
 			return false;
-		uint64_t dimension = std::max( width, height ), requiredLevels = 0;
+		uint64_t dimension = ( std::max )( width, height ), requiredLevels = 0;
 		while ( dimension )
 		{
 			++requiredLevels;
@@ -150,8 +150,8 @@ namespace xrlib
 			outImage.image.insert( outImage.image.end(), pixels, pixels + size );
 			if ( level + 1 < levels && w == 1 && h == 1 )
 				return false;
-			w = std::max( uint64_t( 1 ), w / 2 );
-			h = std::max( uint64_t( 1 ), h / 2 );
+			w = ( std::max )( uint64_t( 1 ), w / 2 );
+			h = ( std::max )( uint64_t( 1 ), h / 2 );
 		}
 		if ( w != 1 || h != 1 )
 			return false;
@@ -219,7 +219,7 @@ namespace xrlib
 			return true;
 		};
 
-		const size_t unWorkers = std::min( outModel.images.size(), static_cast< size_t >( std::min( std::max( 1u, unMaxWorkers ), std::max( 1u, std::thread::hardware_concurrency() ) ) ) );
+		const size_t unWorkers = ( std::min )( outModel.images.size(), static_cast< size_t >( ( std::min )( ( std::max )( 1u, unMaxWorkers ), ( std::max )( 1u, std::thread::hardware_concurrency() ) ) ) );
 		if ( unWorkers <= 1 )
 		{
 			for ( size_t i = 0; i < outModel.images.size(); ++i )
@@ -568,7 +568,7 @@ namespace xrlib
 				 sampler.minFilter == fastgltf::Filter::LinearMipMapLinear )
 			{
 				// Calculate max mip levels based on texture dimensions
-				outTexture->samplerConfig.mipLevels = static_cast< uint32_t >( std::floor( std::log2( std::max( image.width, image.height ) ) ) ) + 1;
+				outTexture->samplerConfig.mipLevels = static_cast< uint32_t >( std::floor( std::log2( ( std::max )( image.width, image.height ) ) ) ) + 1;
 				outTexture->samplerConfig.minLod = 0.0f;
 				outTexture->samplerConfig.maxLod = static_cast< float >( outTexture->samplerConfig.mipLevels );
 			}

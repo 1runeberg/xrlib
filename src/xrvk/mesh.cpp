@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -29,7 +29,7 @@ namespace xrlib
 	}
 
 	CRenderModel::CRenderModel( CSession *pSession, CRenderInfo *pRenderInfo, bool bIsVisible, XrVector3f xrScale, XrSpace xrSpace ) : 
-		CRenderable( pSession, pRenderInfo, 0, 0, std::numeric_limits< uint32_t >::max(), bIsVisible, xrScale, xrSpace )
+		CRenderable( pSession, pRenderInfo, 0, 0, ( std::numeric_limits< uint32_t >::max )(), bIsVisible, xrScale, xrSpace )
 	{
 	}
 
@@ -183,7 +183,7 @@ namespace xrlib
 
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties( m_pSession->GetVulkan()->GetVkPhysicalDevice(), &properties );
-		const VkDeviceSize alignment = std::max( VkDeviceSize( 1 ), properties.limits.minUniformBufferOffsetAlignment );
+		const VkDeviceSize alignment = ( std::max )( VkDeviceSize( 1 ), properties.limits.minUniformBufferOffsetAlignment );
 		const VkDeviceSize stride = ( sizeof( SMaterialUBO ) + alignment - 1 ) / alignment * alignment;
 		delete pFragmentDescriptorsBuffer;
 		pFragmentDescriptorsBuffer = pRenderInfo->pDescriptors->CreateBuffer(

@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -279,7 +279,7 @@ namespace xrlib
 			CRenderInfo *pRenderInfo,
 			uint16_t pipelineLayoutIdx,
 			uint16_t graphicsPipelineIdx,
-			uint32_t descriptorLayoutIdx = std::numeric_limits< uint32_t >::max(),
+			uint32_t descriptorLayoutIdx = ( std::numeric_limits< uint32_t >::max )(),
 			bool bIsVisible = true,
 			XrVector3f xrScale = { 1.f, 1.f, 1.f },
 			XrSpace xrSpace = XR_NULL_HANDLE );
