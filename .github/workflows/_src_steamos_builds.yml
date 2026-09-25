@@ -1,0 +1,53 @@
+# xrlib
+
+name: _src_steamos_builds
+
+on:
+  workflow_call:
+    inputs:
+      matrix-json:
+        description: 'Build matrix json'
+        required: true
+        type: string
+      build-as-static:
+        description: 'Whether to build as a static library (ON/OFF)'
+        required: true
+        type: string
+      export-artifacts:
+        description: 'Whether to export artifacts (ON/OFF)'
+        required: true
+        type: string
+
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs['matrix-json']) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Build xrlib for SteamOS ARM64
+        run: |
+          docker build --platform linux/arm64 --target libraries \
+            --build-arg BUILD_TYPE=${{ matrix.build_type }} \
+            --build-arg CPP_COMPILER=${{ matrix.cpp_compiler }} \
+            --build-arg BUILD_AS_STATIC=${{ inputs.build-as-static }} \
+            --build-arg ENABLE_XRVK=${{ matrix.enable_xrvk }} \
+            --output type=local,dest=build/steamos-arm64/lib \
+            -f platforms/steamos/Dockerfile .
+
+      - name: Upload build artifact
+        if: ${{ inputs.export-artifacts == 'ON' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xrlib-steamos-arm64_compiler_${{ matrix.cpp_compiler }}_static_${{ inputs.build-as-static }}-xrvk_${{ matrix.enable_xrvk }}
+          path: build/steamos-arm64/lib
+          if-no-files-found: error
