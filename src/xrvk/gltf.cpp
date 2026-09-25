@@ -263,11 +263,6 @@ namespace xrlib
 		std::vector< uint32_t > &indices, 
 		std::vector< SMeshSection > &materialSections )
 	{
-		// Set material mesh section tracking
-		uint32_t currentFirstIndex = indices.empty() ? 0 : indices.size() - 1;
-		uint32_t currentIndexCount = 0;
-		uint32_t currentMaterialIndex = 0;
-
 		// Process each primitive in the mesh
 		for ( const auto &primitive : mesh.primitives )
 		{
@@ -283,8 +278,7 @@ namespace xrlib
 			{
 				vertices[ i ] = {};
 				vertices[ i ].color0 = { 1.0f, 1.0f, 1.0f };
-				if ( primitive.findAttribute( "NORMAL" ) != primitive.attributes.end() )
-					vertices[ i ].tangent = { 1.0f, 0.0f, 0.0f, 1.0f };
+
 			}
 
 			// Read attributes through fastgltf's accessor tools, including strides and normalization
@@ -350,108 +344,22 @@ namespace xrlib
 					vertices[ i ].weights[ 0 ] = 1.0f;
 			}
 
-			// Process indices
-			if ( primitive.indicesAccessor.has_value() )
+			const uint32_t firstIndex = static_cast< uint32_t >( indices.size() );
+			if ( primitive.indicesAccessor )
 			{
-				const fastgltf::Accessor &accessor = model.accessors[ *primitive.indicesAccessor ];
-				const uint32_t numIndices = accessor.count;
-				fastgltf::iterateAccessor< uint32_t >( model, accessor, [&]( uint32_t unIndex ) {
-					indices.push_back( unIndex + vertexBase );
+				fastgltf::iterateAccessor< uint32_t >( model, model.accessors[ *primitive.indicesAccessor ], [&]( uint32_t index ) {
+					if ( index >= posAccessor.count )
+						throw std::runtime_error( "glTF index exceeds vertex count" );
+					indices.push_back( index + vertexBase );
 				} );
-
-				// Material section
-				uint32_t materialIndex = static_cast< uint32_t >( primitive.materialIndex.value_or( 0 ) );
-				if ( primitive.materialIndex.has_value() )
-				{
-					// If material changes, add the last section and create a new one
-					if ( materialIndex != currentMaterialIndex )
-					{
-						// Add new mesh section
-						SMeshSection newSection { .firstIndex = currentFirstIndex, .indexCount = currentIndexCount, .materialIndex = materialIndex };
-						materialSections.push_back( newSection );
-
-						// Set for new section
-						currentFirstIndex = currentFirstIndex + currentIndexCount;
-						currentIndexCount = 0;
-						currentMaterialIndex = materialIndex;
-					}
-
-					currentIndexCount += numIndices;
-				}
-				else
-				{
-					// No material - add last mesh section
-					if ( currentIndexCount > 0 )
-					{
-						// Add new mesh section
-						SMeshSection newSection { .firstIndex = currentFirstIndex, .indexCount = currentIndexCount, .materialIndex = materialIndex };
-						materialSections.push_back( newSection );
-
-						// Set for new section
-						currentFirstIndex = currentFirstIndex + currentIndexCount;
-						currentIndexCount = 0;
-					}
-				}
 			}
 			else
-			{
-				// Handle non-indexed geometry
-				// When no indices are specified, vertices are used in order as triangles
-				const size_t numVertices = posAccessor.count;
-				for ( size_t i = 0; i < numVertices; i++ )
-				{
-					indices.push_back( static_cast< uint32_t >( vertices.size() - numVertices + i ) );
-				}
-
-				// Update material section tracking
-				uint32_t materialIndex = static_cast< uint32_t >( primitive.materialIndex.value_or( 0 ) );
-				if ( primitive.materialIndex.has_value() )
-				{
-					if ( materialIndex != currentMaterialIndex )
-					{
-						// Add new mesh section
-						SMeshSection newSection { .firstIndex = currentFirstIndex, .indexCount = currentIndexCount, .materialIndex = materialIndex };
-						materialSections.push_back( newSection );
-
-						// Set for new section
-						currentFirstIndex = currentFirstIndex + currentIndexCount;
-						currentIndexCount = 0;
-						currentMaterialIndex = materialIndex;
-					}
-
-					currentIndexCount += numVertices;
-				}
-				else if ( currentIndexCount > 0 )
-				{
-					// No material - add last mesh section
-					SMeshSection newSection { .firstIndex = currentFirstIndex, .indexCount = currentIndexCount, .materialIndex = materialIndex };
-					materialSections.push_back( newSection );
-
-					// Set for new section
-					currentFirstIndex = currentFirstIndex + currentIndexCount;
-					currentIndexCount = 0;
-				}
-			}
-		
-
-			// Check for single material
-			if ( materialSections.empty() && currentIndexCount > 0 )
-			{
-				// Add new mesh section
-				SMeshSection newSection { .firstIndex = 0, .indexCount = static_cast< uint32_t >( indices.size() ), .materialIndex = 0 };
-				materialSections.push_back( newSection );
-			}
-			// Check for last material section
-			else if ( !materialSections.empty() && currentIndexCount > 0 )
-			{
-
-				// Add new mesh section
-				SMeshSection newSection { .firstIndex = currentFirstIndex, .indexCount = currentIndexCount, .materialIndex = currentMaterialIndex };
-				materialSections.push_back( newSection );
-			}
-
+				for ( size_t i = 0; i < posAccessor.count; ++i )
+					indices.push_back( vertexBase + static_cast< uint32_t >( i ) );
+			const uint32_t count = static_cast< uint32_t >( indices.size() ) - firstIndex;
+			if ( count )
+				materialSections.push_back( { firstIndex, count, static_cast< uint32_t >( primitive.materialIndex.value_or( model.materials.size() ) ) } );
 		}
-
 	}
 
 	void CGltf::ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model )
@@ -593,6 +501,13 @@ namespace xrlib
 		{
 			outTexture->data = image.image;
 
+			const size_t textureIndex = &gltfTexture - model.asset.textures.data();
+			const bool colorTexture = std::any_of( model.asset.materials.begin(), model.asset.materials.end(), [&]( const auto &material ) {
+				return ( material.pbrData.baseColorTexture && material.pbrData.baseColorTexture->textureIndex == textureIndex ) ||
+					( material.emissiveTexture && material.emissiveTexture->textureIndex == textureIndex );
+			} );
+			const bool srgbView = colorTexture && outTexture->format == VK_FORMAT_R8G8B8A8_UNORM;
+
 			// Create image
 			vkutils::CreateImage(
 				outTexture->image,
@@ -604,10 +519,13 @@ namespace xrlib
 				outTexture->format,
 				VK_IMAGE_TILING_OPTIMAL,
 				VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, srgbView ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0 );
 
 			// Create image view
 			VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->view, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, outTexture->format, VK_IMAGE_ASPECT_COLOR_BIT ) );
+
+			if ( srgbView )
+				VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->srgbView, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT ) );
 
 			// Upload image to gpu buffer and transition image for shader reads
 			if ( !m_options.batchTextureUploads )
@@ -717,9 +635,6 @@ namespace xrlib
 
 	void CGltf::ParseMaterials( CRenderModel *outRenderModel, const fastgltf::Asset &model )
 	{
-		if ( model.materials.size() < 1 )
-			return;
-
 		outRenderModel->materials.reserve( model.materials.size() );
 		for ( const auto &gltfMaterial : model.materials )
 		{
@@ -730,6 +645,12 @@ namespace xrlib
 			// Parse texture type referenced by this material
 			IdentifyTextureTypes( outRenderModel->textures, model );
 		}
+		const bool needsDefault = std::any_of( model.meshes.begin(), model.meshes.end(), []( const auto &mesh ) {
+			return std::any_of( mesh.primitives.begin(), mesh.primitives.end(), []( const auto &primitive ) { return !primitive.materialIndex.has_value(); } );
+		} );
+		if ( needsDefault )
+			outRenderModel->materials.emplace_back();
+
 	}
 
 	void CGltf::ParseMaterial( SMaterial *outMaterial, const fastgltf::Asset &model, const fastgltf::Material &gltfMaterial )
@@ -742,6 +663,21 @@ namespace xrlib
 				outMaterial->baseColorFactor[ i ] = static_cast< float >( gltfMaterial.pbrData.baseColorFactor[ i ] );
 			}
 		}
+
+		outMaterial->metallicFactor = gltfMaterial.pbrData.metallicFactor;
+		outMaterial->roughnessFactor = gltfMaterial.pbrData.roughnessFactor;
+		outMaterial->normalScale = gltfMaterial.normalTexture ? gltfMaterial.normalTexture->scale : 1.f;
+		outMaterial->occlusionStrength = gltfMaterial.occlusionTexture ? gltfMaterial.occlusionTexture->strength : 1.f;
+		auto SetUV = [&]( const auto &texture, uint32_t flag ) {
+			if ( texture && texture->texCoordIndex > 1 )
+				throw std::runtime_error( "xrvk supports TEXCOORD_0 and TEXCOORD_1" );
+			outMaterial->setTextureFlag( flag << TEXTURE_UV1_SHIFT, texture && texture->texCoordIndex == 1 );
+		};
+		SetUV( gltfMaterial.pbrData.baseColorTexture, TEXTURE_BASE_COLOR_BIT );
+		SetUV( gltfMaterial.pbrData.metallicRoughnessTexture, TEXTURE_METALLIC_ROUGH_BIT );
+		SetUV( gltfMaterial.normalTexture, TEXTURE_NORMAL_BIT );
+		SetUV( gltfMaterial.emissiveTexture, TEXTURE_EMISSIVE_BIT );
+		SetUV( gltfMaterial.occlusionTexture, TEXTURE_OCCLUSION_BIT );
 
 		// Parse texture indices
 		outMaterial->baseColorTexture = TextureIndex( gltfMaterial.pbrData.baseColorTexture );

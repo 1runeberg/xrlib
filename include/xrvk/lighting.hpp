@@ -112,9 +112,12 @@ namespace xrlib
 		alignas( 16 ) SSpotLight spotLights[ MAX_SPOT_LIGHTS ];
 		alignas( 16 ) XrVector3f ambientColor = { 0.1f, 0.1f, 0.12f }; // Ambient light color
 		float ambientIntensity = 1.0f;								   // Ambient light intensity
-		uint8_t activePointLights = 0;								   // Number of active point lights
-		uint8_t activeSpotLights = 0;								   // Number of active spot lights
+		uint32_t activePointLights = 0;								   // Number of active point lights
+		uint32_t activeSpotLights = 0;								   // Number of active spot lights
 		alignas( 16 ) STonemapping tonemapping;
+		alignas( 16 ) XrVector4f eyePositions[ 2 ] {};				   // App-space eye positions, updated by the renderer
+		uint32_t outputSRGB = 0;									   // The render target performs the linear-to-sRGB conversion
+		uint32_t padding[ 3 ] {};
 
 		// Helper functions to manage active lights
 		bool addPointLight( const SPointLight &light )
@@ -159,3 +162,8 @@ namespace xrlib
 	static_assert( MAX_SPOT_LIGHTS > 0, "Must have at least one spot light slot" );
 
 } // namespace xrlib
+static_assert( offsetof( xrlib::SSceneLighting, activePointLights ) == 272 );
+static_assert( offsetof( xrlib::SSceneLighting, activeSpotLights ) == 276 );
+static_assert( offsetof( xrlib::SSceneLighting, tonemapping ) == 288 );
+static_assert( offsetof( xrlib::SSceneLighting, eyePositions ) == 320 );
+static_assert( offsetof( xrlib::SSceneLighting, outputSRGB ) == 352 );

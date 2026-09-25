@@ -87,7 +87,7 @@ namespace xrlib
 				return result;
 
 
-			memcpy( m_pData, pData, m_vkMemorySize );
+			memcpy( m_pData, pData, unSize );
 			if ( ( memPropFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ) == 0 )
 			{
 				result = FlushMemory();

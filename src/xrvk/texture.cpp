@@ -34,6 +34,13 @@ namespace xrlib
 		Cleanup(); 
 	}
 
+	const STexture &CTextureManager::GetDefaultTexture()
+	{
+		if ( !m_defaultTexture.image )
+			VK_CHECK_RESULT( CreateDefaultTexture( m_defaultTexture ) );
+		return m_defaultTexture;
+	}
+
 	VkResult CTextureManager::CreateDefaultTexture( STexture &outTexture ) 
 	{
 		// Initialize with 1x1 white pixel
@@ -143,6 +150,8 @@ namespace xrlib
 
 	void CTextureManager::DestroyTexture( STexture &texture )
 	{
+		if ( texture.srgbView != VK_NULL_HANDLE )
+			vkDestroyImageView( GetDevice(), texture.srgbView, nullptr );
 		if ( texture.view != VK_NULL_HANDLE )
 			vkDestroyImageView( GetDevice(), texture.view, nullptr );
 		if ( texture.image != VK_NULL_HANDLE )
@@ -157,6 +166,7 @@ namespace xrlib
 
 	void CTextureManager::Cleanup()
 	{
+		DestroyTexture( m_defaultTexture );
 		if ( m_defaultSampler != VK_NULL_HANDLE )
 		{
 			vkDestroySampler( GetDevice(), m_defaultSampler, nullptr );

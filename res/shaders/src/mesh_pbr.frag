@@ -1,366 +1,174 @@
-// Copyright 2024-25 Rune Berg (http://runeberg.io | https://github.com/1runeberg)
+// Copyright 2024-26 Rune Berg (http://runeberg.io | https://github.com/1runeberg)
 // Licensed under Apache 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
 // SPDX-License-Identifier: Apache-2.0
-
 #version 450
-#define MAX_POINT_LIGHTS 3
-#define MAX_SPOTLIGHTS 2
+#include "pbr_types.glsl"
+#include "tonemaps.glsl"
 #define PI 3.14159265359
-#define EPSILON 0.0001
+layout(set=0,binding=1) uniform sampler2D baseColorMap;
+layout(set=0,binding=2) uniform sampler2D metallicRoughnessMap;
+layout(set=0,binding=3) uniform sampler2D normalMap;
+layout(set=0,binding=4) uniform sampler2D emissiveMap;
+layout(set=0,binding=5) uniform sampler2D occlusionMap;
+layout(location=0) in vec3 inWorldPos;
+layout(location=1) in vec2 inUV;
+layout(location=2) in vec3 inNormal;
+layout(location=3) in vec3 inTangent;
+layout(location=4) in vec3 inBitangent;
+layout(location=5) in vec3 inViewDirection;
+layout(location=6) in vec3 inColor;
+layout(location=7) in vec2 inUV1;
+layout(location=0) out vec4 outColor;
 
-// Flag definitions for packed bits in tonemap uint
-#define TONEMAP_MASK 0xFu         // First 4 bits reserved for tonemap enum (16 values)
-#define TONEMAP_SHIFT 0u          // Shift amount for tonemap bits
-
-#define RENDER_MODE_MASK 0xF0u    // Next 4 bits reserved for render mode enum (16 values)
-#define RENDER_MODE_SHIFT 4u      // Shift amount for render mode bits
-
-// Render modes (values after shift)
-#define RENDER_MODE_UNLIT 0u
-#define RENDER_MODE_BLINN_PHONG 1u
-#define RENDER_MODE_PBR 2u
-
-// Material texture flags
-#define TEXTURE_BASE_COLOR_BIT     0x01u
-#define TEXTURE_METALLIC_ROUGH_BIT 0x02u
-#define TEXTURE_NORMAL_BIT         0x04u
-#define TEXTURE_EMISSIVE_BIT       0x08u
-#define TEXTURE_OCCLUSION_BIT      0x10u
-
-// Remaining bits 8-31 available for additional flags
-
-#include "tonemaps.glsl"    // Supported tonemapping functions (see xrlib::ETonemapOperator)
-
-// Material UBO
-layout(set = 0, binding = 0) uniform MaterialUBO {
-    vec4 baseColorFactor;
-    vec4 emissiveFactor;
-    float metallicFactor;
-    float roughnessFactor;
-    float alphaCutoff;
-    float normalScale;
-    uint textureFlags;
-    int alphaMode;
-    vec2 padding;
-} material;
-
-// Scene Lighting UBO
-    
-// Main directional light
-struct DirectionalLight {
-    vec3 direction;
-    float intensity;
-    vec3 color;
-};
-
-// Point lights
-struct PointLight {
-    vec3 position;
-    float range;
-    vec3 color;
-    float intensity;
-};
-
-// Spot lights
-struct SpotLight {
-    vec3 position;
-    float range;
-    vec3 direction;
-    float intensity;
-    vec3 color;
-    float innerCone;
-    float outerCone;
-};
-
-// Tonemapping parameters with packed flags
-struct Tonemapping {
-    float exposure;
-    float gamma;
-    uint tonemap;      // Bits 0-3: tonemap operator, Bits 4-5: render mode, Bits 6-31: available
-    float contrast;
-    float saturation;
-};
-
-layout(set = 1, binding = 0) uniform SceneLighting {
-    // Scene lighting
-    DirectionalLight mainLight;
-    PointLight pointLights[MAX_POINT_LIGHTS];
-    SpotLight spotLights[MAX_SPOTLIGHTS];
-
-    // Scene ambient and active lights
-    vec3 ambientColor;
-    float ambientIntensity;
-    uint activePointLights;
-    uint activeSpotLights;
-
-    Tonemapping tonemapping;
-} scene;
-
-// Texture samplers
-layout(binding = 1) uniform sampler2D baseColorMap;
-layout(binding = 2) uniform sampler2D metallicRoughnessMap;
-layout(binding = 3) uniform sampler2D normalMap;
-layout(binding = 4) uniform sampler2D emissiveMap;
-layout(binding = 5) uniform sampler2D occlusionMap;
-
-// Input from vertex shader
-layout(location = 0) in vec3 inWorldPos;
-layout(location = 1) in vec2 inUV;
-layout(location = 2) in vec3 inNormal;
-layout(location = 3) in vec3 inTangent;
-layout(location = 4) in vec3 inBitangent;
-
-// Output
-layout(location = 0) out vec4 outColor;
-
-// Optimized PBR functions
-vec3 fresnelSchlickFast(float cosTheta, vec3 F0) {
-    return F0 + (1.0 - F0) * exp2((-5.55473 * cosTheta - 6.98316) * cosTheta);
+vec3 safeNormalize(vec3 value) { return value * inversesqrt(max(dot(value,value),1e-20)); }
+vec2 textureUV(uint flag) { return (material.textureFlags & (flag << 8)) != 0u ? inUV1 : inUV; }
+vec3 srgbToLinear(vec3 value) {
+    return mix(pow((value+0.055)/1.055,vec3(2.4)),value/12.92,lessThanEqual(value,vec3(0.04045)));
+}
+vec3 fresnelSchlick(float cosine, vec3 F0) {
+    float x = 1.0-clamp(cosine,0.0,1.0);
+    float x2 = x*x;
+    return F0 + (1.0-F0)*(x2*x2*x);
 }
 
-float DistributionGGXFast(float NdotH, float roughness) {
-    float a2 = roughness * roughness;
-    float f = (NdotH * a2 - NdotH) * NdotH + 1.0;
-    return a2 / (PI * f * f);
+// glTF roughness is perceptual: alpha = roughness^2, GGX uses alpha^2
+float distributionGGX(float NoH, float alphaSquared) {
+    float d = max((NoH*alphaSquared-NoH)*NoH+1.0,1e-7);
+    return alphaSquared/(PI*d*d);
 }
 
-float GeometrySmithFast(float NdotV, float NdotL, float roughness) {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
-    return (NdotV * NdotL) / ((NdotV * (1.0 - k) + k) * (NdotL * (1.0 - k) + k));
+// Height-correlated Smith visibility, including the 1/(4 NoV NoL) term
+float visibilitySmith(float NoV, float NoL, float alphaSquared) {
+    float v = NoL*sqrt(NoV*NoV*(1.0-alphaSquared)+alphaSquared);
+    float l = NoV*sqrt(NoL*NoL*(1.0-alphaSquared)+alphaSquared);
+    return 0.5/max(v+l,1e-7);
 }
-
-// Unified light calculation struct
-struct LightParams {
-    vec3 lightDir;
-    vec3 lightColor;
-    float lightIntensity;
-    vec3 viewDir;
-    vec3 normal;
-    vec3 baseColor;
-    float metallic;
-    float roughness;
-    vec3 F0;
-};
-
-// Combined light calculation function
-vec3 calculateLight(LightParams params, uint renderMode) {
-    if (renderMode == RENDER_MODE_PBR) {
-        vec3 H = normalize(params.viewDir + params.lightDir);
-        float NdotL = max(dot(params.normal, params.lightDir), 0.0);
-        float NdotH = max(dot(params.normal, H), 0.0);
-        float NdotV = max(dot(params.normal, params.viewDir), 0.0);
-        float VdotH = max(dot(params.viewDir, H), 0.0);
-
-        vec3 F = fresnelSchlickFast(VdotH, params.F0);
-        float D = DistributionGGXFast(NdotH, params.roughness);
-        float G = GeometrySmithFast(NdotV, NdotL, params.roughness);
-
-        vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
-        vec3 kD = (vec3(1.0) - F) * (1.0 - params.metallic);
-        
-        return (kD * params.baseColor / PI + specular) * params.lightColor * params.lightIntensity * NdotL;
-    } else {
-        // Blinn-Phong
-        float diff = max(dot(params.normal, params.lightDir), 0.0);
-        vec3 halfwayDir = normalize(params.lightDir + params.viewDir);
-        float spec = pow(max(dot(params.normal, halfwayDir), 0.0), 32.0);
-        return (diff + spec * 0.5) * params.lightColor * params.lightIntensity * params.baseColor;
+vec3 directLight(vec3 N, vec3 V, float NoV, vec3 L, vec3 radiance,
+                 vec3 baseColor, vec3 F0, float metallic, float alphaSquared, uint mode) {
+    float NoL = max(dot(N,L),0.0);
+    if (NoL <= 0.0 || NoV <= 0.0) return vec3(0);
+    vec3 H = safeNormalize(V+L);
+    if (mode == 1u) {
+        float specular = pow(max(dot(N,H),0.0),32.0);
+        return (baseColor*NoL+vec3(specular*0.5))*radiance;
     }
+    vec3 F = fresnelSchlick(max(dot(V,H),0.0),F0);
+    float D = distributionGGX(max(dot(N,H),0.0),alphaSquared);
+    float visibility = visibilitySmith(NoV,NoL,alphaSquared);
+    vec3 diffuse = (1.0-F)*(1.0-metallic)*baseColor/PI;
+    return (diffuse+D*visibility*F)*radiance*NoL;
 }
-
-// IBL Approximations
-// Spherical Harmonics approximation for ambient diffuse
-vec3 getAmbientSH(vec3 normal) {
-
-    // Base coefficients modulated by scene ambient
-    vec3 L00 = scene.ambientColor * vec3(0.15, 0.13, 0.11);  // Ambient base
-    
-    // Side light influenced by main light color
-    vec3 L1_1 = scene.mainLight.color * vec3(0.25, 0.15, 0.1);  
-    
-    // Top light (sky contribution)
-    vec3 L10 = scene.ambientColor * vec3(0.075, 0.075, 0.1);
-    
-    // Front light influenced by main light
-    vec3 L11 = scene.mainLight.color * vec3(0.15, 0.1, 0.05);   
-    
-    // Modulate all coefficients by scene ambient intensity
-    L00 *= scene.ambientIntensity;
-    L1_1 *= scene.mainLight.intensity * 0.5;
-    L10 *= scene.ambientIntensity;
-    L11 *= scene.mainLight.intensity * 0.5;
-    
-    // Spherical harmonics evaluation
-    return L00 + 
-           L1_1 * normal.x +
-           L10 * normal.y +
-           L11 * normal.z;
-}
-
-// Approximated specular IBL
-vec3 getSpecularIBL(vec3 reflectDir, float roughness, vec3 F0) {
-    float NoV = max(dot(reflectDir, vec3(0, 1, 0)), 0.0);
-    vec3 fresnel = fresnelSchlickFast(NoV, F0);
-    
-    // Reduce the base reflection colors
-    vec3 horizonColor = mix(scene.mainLight.color, vec3(0.3, 0.2, 0.15), 0.4) * scene.mainLight.intensity;
-    vec3 skyColor = scene.ambientColor * vec3(0.1, 0.12, 0.15) * scene.ambientIntensity;
-    
-    vec3 gradientColor = mix(horizonColor, skyColor, pow(reflectDir.y * 0.5 + 0.5, 1.5));
-    
-    float smoothness = 1.0 - roughness;
-    float reflectionStrength = smoothness * smoothness; 
-    
-    return gradientColor * fresnel * reflectionStrength;
-}
-
-// Main IBL approximation function
-vec3 approximateIBL(vec3 normal, vec3 viewDir, vec3 baseColor, float metallic, float roughness) {
-    vec3 F0 = mix(vec3(0.04), baseColor, metallic);
-    vec3 reflectDir = reflect(-viewDir, normal);
-    
-    // Get diffuse and specular components
-    vec3 diffuseIBL = getAmbientSH(normal) * baseColor * (1.0 - metallic);
-    
-    // Add roughness-based attenuation to specular
-    float specularAttenuation = (1.0 - roughness) * (1.0 - roughness);
-    vec3 specularIBL = getSpecularIBL(reflectDir, roughness, F0) * specularAttenuation;
-    
-    // Scale the diffuse contribution higher relative to specular
-    return diffuseIBL * 1.5 + specularIBL * 0.5;
-}
-
-vec3 calculateAmbient(vec3 baseColor, vec3 normal, vec3 viewDir, float metallic, float roughness, float ao, uint renderMode) {
-    if (renderMode == RENDER_MODE_PBR) {
-       // vec3 F0 = mix(vec3(0.04), baseColor, metallic);
-       // vec3 kS = fresnelSchlickFast(max(dot(normal, viewDir), 0.0), F0);
-       // vec3 kD = (1.0 - kS) * (1.0 - metallic);
-       // return scene.ambientColor * scene.ambientIntensity * (kD * baseColor + kS * mix(vec3(0.04), baseColor, metallic)) * ao;
-        vec3 iblColor = approximateIBL(normal, viewDir, baseColor, metallic, roughness);
-        return iblColor * ao * scene.ambientIntensity;
+float distanceAttenuation(float distanceSquared, float range) {
+    float attenuation = 1.0/max(distanceSquared,1e-4);
+    if (range > 0.0) {
+        float ratio = distanceSquared/(range*range);
+        float cutoff = clamp(1.0-ratio*ratio,0.0,1.0);
+        attenuation *= cutoff*cutoff;
     }
-
-    return scene.ambientColor * scene.ambientIntensity * baseColor;
+    return attenuation;
 }
+vec3 surfaceNormal(vec3 V) {
+    vec3 N = safeNormalize(inNormal);
+    if (dot(N,N) < 0.5) {
+        N = safeNormalize(cross(dFdx(inWorldPos),dFdy(inWorldPos)));
+        if (dot(N,V)<0.0) N = -N;
+    } else if (!gl_FrontFacing) N = -N;
+    if ((material.textureFlags & TEXTURE_NORMAL_BIT) == 0u) return N;
+    vec2 uv = textureUV(TEXTURE_NORMAL_BIT);
+    vec3 sampled = texture(normalMap,uv).xyz*2.0-1.0;
+    sampled.xy *= material.normalScale;
+    vec3 T = inTangent - N*dot(N,inTangent);
+    vec3 B = inBitangent;
 
+    // Missing tangents and UV1 normal maps need a frame from the selected UVs
+    if (dot(T,T)<1e-10 || dot(B,B)<1e-10 || (material.textureFlags & (TEXTURE_NORMAL_BIT << 8)) != 0u) {
+        vec3 p1=dFdx(inWorldPos), p2=dFdy(inWorldPos);
+        vec2 t1=dFdx(uv), t2=dFdy(uv);
+        float determinant=t1.x*t2.y-t1.y*t2.x;
+        if (abs(determinant)<1e-10) return N;
+        T=(p1*t2.y-p2*t1.y)/determinant;
+        B=(p2*t1.x-p1*t2.x)/determinant;
+        T-=N*dot(N,T);
+    }
+    T=safeNormalize(T);
+    B=safeNormalize(cross(N,T))*(dot(cross(N,T),B)<0.0 ? -1.0 : 1.0);
+    return safeNormalize(mat3(T,B,N)*sampled);
+}
+vec3 displayColor(vec3 linearColor) {
+    uint op = scene.tonemapping.tonemap & 15u;
+    vec3 color=max(linearColor,vec3(0))*max(scene.tonemapping.exposure,0.0);
+    TonemapParams params=TonemapParams(1.0,scene.tonemapping.gamma);
+    if (op==1u) color=tonemapReinhard(color,params);
+    else if (op==2u) color=tonemapACES(color,params);
+    else if (op==3u) color=tonemapKHRNeutral(color,params);
+    else if (op==4u) color=tonemapUncharted2(color,params);
+    float luminance=dot(color,vec3(0.2126,0.7152,0.0722));
+    color=mix(vec3(luminance),color,max(scene.tonemapping.saturation,0.0));
+    color=max((color-0.18)*max(scene.tonemapping.contrast,0.0)+0.18,vec3(0));
+
+    // SRGB render targets encode once in hardware. Gamma remains available for UNORM targets
+    return scene.outputSRGB!=0u ? color : gammaCorrect(color,scene.tonemapping.gamma);
+}
 void main() {
-    // Extract flags from tonemap uint - get both tonemap and render mode
-    uint tonemapOp = (scene.tonemapping.tonemap & TONEMAP_MASK) >> TONEMAP_SHIFT;
-    uint renderMode = (scene.tonemapping.tonemap & RENDER_MODE_MASK) >> RENDER_MODE_SHIFT;
-
-    // Always sample base color
-    vec4 baseColor = material.baseColorFactor;
-    float metallic = material.metallicFactor;
-    float roughness = material.roughnessFactor;
-    float ao = 1.0;
-
-    if ((material.textureFlags & TEXTURE_BASE_COLOR_BIT) != 0u) {
-        baseColor *= texture(baseColorMap, inUV);
-        if (material.alphaMode == 1 && baseColor.a < material.alphaCutoff) {
-            discard;
+    uint flags=material.textureFlags;
+    uint mode=(scene.tonemapping.tonemap >> 4)&15u;
+    uint alphaMode=(flags >> 24)&3u;
+    vec4 base=material.baseColorFactor*vec4(inColor,1);
+    if ((flags & TEXTURE_BASE_COLOR_BIT)!=0u) {
+        vec4 sampled=texture(baseColorMap,textureUV(TEXTURE_BASE_COLOR_BIT));
+        if ((flags & TEXTURE_BASE_COLOR_SRGB_BIT)==0u) sampled.rgb=srgbToLinear(sampled.rgb);
+        base*=sampled;
+    }
+    if (alphaMode==1u && base.a<material.alphaCutoff) discard;
+    if (alphaMode!=2u) base.a=1.0;
+    if (mode==0u) { outColor=vec4(displayColor(base.rgb),base.a); return; }
+    vec3 V=safeNormalize(inViewDirection);
+    vec3 N=surfaceNormal(V);
+    float NoV=max(dot(N,V),0.0);
+    float metallic=material.metallicFactor;
+    float roughness=material.roughnessFactor;
+    float ao=1.0;
+    if (mode==2u) {
+        if ((flags & TEXTURE_METALLIC_ROUGH_BIT)!=0u) {
+            vec4 mr=texture(metallicRoughnessMap,textureUV(TEXTURE_METALLIC_ROUGH_BIT));
+            metallic*=mr.b; roughness*=mr.g;
         }
+        if ((flags & TEXTURE_OCCLUSION_BIT)!=0u)
+            ao=mix(1.0,texture(occlusionMap,textureUV(TEXTURE_OCCLUSION_BIT)).r,clamp(material.occlusionStrength,0.0,1.0));
+    } else metallic=0.0;
+    metallic=clamp(metallic,0.0,1.0);
+    roughness=clamp(roughness,0.045,1.0);
+    float alpha=roughness*roughness;
+    float alphaSquared=alpha*alpha;
+    vec3 F0=mix(vec3(0.04),base.rgb,metallic);
+    vec3 color=directLight(N,V,NoV,safeNormalize(-scene.mainLight.direction),scene.mainLight.color*scene.mainLight.intensity,base.rgb,F0,metallic,alphaSquared,mode);
+    for (uint i=0u;i<min(scene.activePointLights,uint(MAX_POINT_LIGHTS));++i) {
+        vec3 delta=scene.pointLights[i].position-inWorldPos;
+        float d2=dot(delta,delta);
+        vec3 radiance=scene.pointLights[i].color*scene.pointLights[i].intensity*distanceAttenuation(d2,scene.pointLights[i].range);
+        color+=directLight(N,V,NoV,safeNormalize(delta),radiance,base.rgb,F0,metallic,alphaSquared,mode);
+    }
+    for (uint i=0u;i<min(scene.activeSpotLights,uint(MAX_SPOTLIGHTS));++i) {
+        vec3 delta=scene.spotLights[i].position-inWorldPos;
+        float d2=dot(delta,delta);
+        vec3 L=safeNormalize(delta);
+        float cosine=dot(L,safeNormalize(-scene.spotLights[i].direction));
+        float inner=scene.spotLights[i].innerCone, outer=scene.spotLights[i].outerCone;
+        float cone=inner>outer ? clamp((cosine-outer)/(inner-outer),0.0,1.0) : step(outer,cosine);
+        if (cone<=0.0) continue;
+        vec3 radiance=scene.spotLights[i].color*scene.spotLights[i].intensity*cone*cone*distanceAttenuation(d2,scene.spotLights[i].range);
+        color+=directLight(N,V,NoV,L,radiance,base.rgb,F0,metallic,alphaSquared,mode);
     }
 
-    // Early exit for unlit mode
-    if (renderMode == RENDER_MODE_UNLIT) {
-        outColor = baseColor;
-        return;
+    // Ambient is diffuse irradiance. Real specular IBL needs an environment map;
+    // a made-up sky gradient is not a reflection of the user's surroundings
+    vec3 diffuseWeight=mode==2u ? (1.0-fresnelSchlick(NoV,F0))*(1.0-metallic) : vec3(1);
+    color+=diffuseWeight*base.rgb*scene.ambientColor*scene.ambientIntensity*ao/PI;
+    vec3 emissive=material.emissiveFactor.rgb;
+    if ((flags & TEXTURE_EMISSIVE_BIT)!=0u) {
+        vec3 sampled=texture(emissiveMap,textureUV(TEXTURE_EMISSIVE_BIT)).rgb;
+        if ((flags & TEXTURE_EMISSIVE_SRGB_BIT)==0u) sampled=srgbToLinear(sampled);
+        emissive*=sampled;
     }
-
-    // Always calculate normal
-    vec3 N = normalize(inNormal);
-    if ((material.textureFlags & TEXTURE_NORMAL_BIT) != 0u) {
-        vec3 tangentNormal = texture(normalMap, inUV).xyz * 2.0 - 1.0;
-        tangentNormal.xy *= material.normalScale;
-        mat3 TBN = mat3(normalize(inTangent), normalize(inBitangent), N);
-        N = normalize(TBN * tangentNormal);
-    }
-
-    // Sample PBR textures if in PBR mode
-    if (renderMode == RENDER_MODE_PBR) {
-        if ((material.textureFlags & TEXTURE_METALLIC_ROUGH_BIT) != 0u) {
-            vec4 metallicRoughness = texture(metallicRoughnessMap, inUV);
-            metallic *= metallicRoughness.b;
-            roughness *= metallicRoughness.g;
-        }
-
-        if ((material.textureFlags & TEXTURE_OCCLUSION_BIT) != 0u) {
-            ao = texture(occlusionMap, inUV).r;
-        }
-    }
-
-    vec3 V = normalize(-inWorldPos);
-    vec3 Lo = vec3(0.0);
-
-    // Fresnel reflectance at normal incidence
-    // 0.04 is average for most dielectric mats (SIGGRAPH 2013 - Real shading in Unreal Engine 4)
-    // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
-    vec3 F0 = renderMode == RENDER_MODE_PBR ? mix(vec3(0.04), baseColor.rgb, metallic) : vec3(0.0); 
-
-    // Setup base light parameters
-    LightParams lightParams;
-    lightParams.viewDir = V;
-    lightParams.normal = N;
-    lightParams.baseColor = baseColor.rgb;
-    lightParams.metallic = metallic;
-    lightParams.roughness = roughness;
-    lightParams.F0 = F0;
-
-    // Main directional light
-    lightParams.lightDir = normalize(-scene.mainLight.direction);
-    lightParams.lightColor = scene.mainLight.color;
-    lightParams.lightIntensity = scene.mainLight.intensity;
-    Lo += calculateLight(lightParams, renderMode);
-
-    // Point lights
-    for (uint i = 0; i < scene.activePointLights && i < MAX_POINT_LIGHTS; i++) {
-        vec3 L = scene.pointLights[i].position - inWorldPos;
-        float dist2 = dot(L, L);
-        lightParams.lightDir = L * inversesqrt(dist2);
-        float atten = clamp(1.0 - dist2/(scene.pointLights[i].range * scene.pointLights[i].range), 0.0, 1.0);
-        
-        lightParams.lightColor = scene.pointLights[i].color;
-        lightParams.lightIntensity = scene.pointLights[i].intensity * atten;
-        Lo += calculateLight(lightParams, renderMode);
-    }
-
-    // Spot lights
-    for (uint i = 0; i < scene.activeSpotLights && i < MAX_SPOTLIGHTS; i++) {
-        vec3 L = scene.spotLights[i].position - inWorldPos;
-        float dist2 = dot(L, L);
-        L *= inversesqrt(dist2);
-        float theta = dot(L, normalize(-scene.spotLights[i].direction));
-        
-        if (theta > scene.spotLights[i].outerCone) {
-            float epsilon = scene.spotLights[i].innerCone - scene.spotLights[i].outerCone;
-            float intensity = clamp((theta - scene.spotLights[i].outerCone) / epsilon, 0.0, 1.0);
-            float atten = clamp(1.0 - dist2/(scene.spotLights[i].range * scene.spotLights[i].range), 0.0, 1.0);
-            
-            lightParams.lightDir = L;
-            lightParams.lightColor = scene.spotLights[i].color;
-            lightParams.lightIntensity = scene.spotLights[i].intensity * atten * intensity;
-            Lo += calculateLight(lightParams, renderMode);
-        }
-    }
-
-    // Calculate ambient and combine
-    vec3 color = calculateAmbient(baseColor.rgb, N, V, metallic, roughness, ao, renderMode) + Lo;
-
-    // Tonemap based on extracted operator
-    TonemapParams tonemapParams = TonemapParams(scene.tonemapping.exposure, scene.tonemapping.gamma);
-    color = tonemapOp == 1 ? tonemapReinhard(color, tonemapParams) :
-            tonemapOp == 2 ? tonemapACES(color, tonemapParams) :
-            tonemapOp == 3 ? tonemapKHRNeutral(color, tonemapParams) :
-            tonemapOp == 4 ? tonemapUncharted2(color, tonemapParams) :
-            color;
-
-    color = gammaCorrect(color, scene.tonemapping.gamma);
-
-    // Optional emissive
-    if ((material.textureFlags & TEXTURE_EMISSIVE_BIT) != 0u) {
-        color += texture(emissiveMap, inUV).rgb * material.emissiveFactor.rgb;
-    }
-
-    outColor = vec4(color, baseColor.a);
+    outColor=vec4(displayColor(color+emissive),base.a);
 }

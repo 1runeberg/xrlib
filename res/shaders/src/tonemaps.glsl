@@ -80,7 +80,7 @@ vec3 tonemapUncharted2(vec3 color, TonemapParams params)
 
 vec3 gammaCorrect(vec3 color, float gamma)
 {
-    return pow(color, vec3(1.0 / gamma));
+    return pow(max(color, vec3(0.0)), vec3(1.0 / max(gamma, 0.001)));
 }
 
 #endif // TONEMAP_INCLUDE

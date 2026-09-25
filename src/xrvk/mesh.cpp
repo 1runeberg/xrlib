@@ -167,203 +167,65 @@ namespace xrlib
 
 	}
 
-	uint32_t CRenderModel::LoadMaterial( CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager ) 
+	uint32_t CRenderModel::LoadMaterial( CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager )
 	{
-		if ( materials.empty() )
-			return 0;
-
-		// Create buffer (for material UBO)
-		pFragmentDescriptorsBuffer = pRenderInfo->pDescriptors->CreateBuffer( 
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
-			sizeof( SMaterialUBO ) );
-
-		assert( pFragmentDescriptorsBuffer );
-
-		for ( auto &material : materials )
-		{
-			// Create descriptor sets for material UBO
-			pRenderInfo->pDescriptors->CreateDescriptorSets(
-				material.descriptors,
-				poolId,
-				layoutId,
-				1 // Number of sets
-			);
-
-			// Update texture samplers
-			STexture defaultTexture;
-			pTextureManager->CreateDefaultTexture( defaultTexture );
-
-			for ( uint32_t i = 1; i <= 5; i++ )
-			{
-				pRenderInfo->pDescriptors->UpdateImageDescriptor(
-					material.descriptors,
-					i, // bindings 1-5 (fragment shader textures)
-					defaultTexture.view,
-					defaultTexture.sampler,
-					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-			}
-
-			// Map the buffer memory
-			if ( pFragmentDescriptorsBuffer->MapMemory() != VK_SUCCESS )
-				return 0;
-
-			// Update material ubo data
-			SMaterialUBO *materialData = static_cast< SMaterialUBO * >( pFragmentDescriptorsBuffer->GetMappedData() );
-			if ( materialData )
-			{
-				// Reset padding
-				material.resetPadding();
-
-				// Update texture flags before copying to gpu buffer
-				material.updateTextureFlags();
-
-				// Copy just the ubo portion of the material for the gpu buffer
-				memcpy( materialData, &material, sizeof( SMaterialUBO ) );
-			}
-
-			// Unmap the buffer
+		std::vector< SMaterialUBO * > materialData;
+		const auto count = LoadMaterial( materialData, pRenderInfo, layoutId, poolId, pTextureManager );
+		if ( pFragmentDescriptorsBuffer )
 			pFragmentDescriptorsBuffer->UnmapMemory();
-
-			// Update textures - bindings should match the texture bindings in the pbr fragment shader
-			if ( material.baseColorTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor(
-					material.descriptors,
-					1,
-					textures[ material.baseColorTexture ].view,
-					textures[ material.baseColorTexture ].sampler,
-					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.metallicRoughnessTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor(
-					material.descriptors,
-					2, 
-					textures[ material.metallicRoughnessTexture ].view,
-					textures[ material.metallicRoughnessTexture ].sampler,
-					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.normalTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor(
-					material.descriptors,
-					3,
-					textures[ material.normalTexture ].view,
-					textures[ material.normalTexture ].sampler,
-					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.emissiveTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor(
-					material.descriptors,
-					4, 
-					textures[ material.emissiveTexture ].view,
-					textures[ material.emissiveTexture ].sampler,
-					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.occlusionTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor(
-					material.descriptors,
-					5, 
-					textures[ material.occlusionTexture ].view,
-					textures[ material.occlusionTexture ].sampler,
-					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			// Update the uniform buffer descriptor
-			pRenderInfo->pDescriptors->UpdateUniformBuffer(
-				material.descriptors,
-				0, // binding = 0 in the pbr fragment shader
-				pFragmentDescriptorsBuffer->GetVkBuffer(),
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				0,					   // offset
-				sizeof( SMaterialUBO ) // size
-			);
-		}
-
-		return materials.size();
+		return count;
 	}
 
-	uint32_t CRenderModel::LoadMaterial( std::vector< SMaterialUBO * > &outMaterialData, CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager ) 
+	uint32_t CRenderModel::LoadMaterial( std::vector< SMaterialUBO * > &outMaterialData, CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager )
 	{
 		if ( materials.empty() )
 			return 0;
 
-		// Create buffer (for material UBO)
-		pFragmentDescriptorsBuffer = pRenderInfo->pDescriptors->CreateBuffer( VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof( SMaterialUBO ) );
+		VkPhysicalDeviceProperties properties;
+		vkGetPhysicalDeviceProperties( m_pSession->GetVulkan()->GetVkPhysicalDevice(), &properties );
+		const VkDeviceSize alignment = std::max( VkDeviceSize( 1 ), properties.limits.minUniformBufferOffsetAlignment );
+		const VkDeviceSize stride = ( sizeof( SMaterialUBO ) + alignment - 1 ) / alignment * alignment;
+		delete pFragmentDescriptorsBuffer;
+		pFragmentDescriptorsBuffer = pRenderInfo->pDescriptors->CreateBuffer(
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stride * materials.size() );
+		if ( !pFragmentDescriptorsBuffer || pFragmentDescriptorsBuffer->MapMemory() != VK_SUCCESS )
+			return 0;
 
-		assert( pFragmentDescriptorsBuffer );
-
-		uint32_t unMaterialCount = 0;
-		for ( auto &material : materials )
+		auto *mapped = static_cast< uint8_t * >( pFragmentDescriptorsBuffer->GetMappedData() );
+		const STexture *fallback = nullptr;
+		for ( size_t i = 0; i < materials.size(); ++i )
 		{
-			// Create descriptor sets for material UBO
-			pRenderInfo->pDescriptors->CreateDescriptorSets(
-				material.descriptors,
-				poolId,
-				layoutId,
-				1 // Number of sets
-			);
-
-			// Update texture samplers
-			STexture defaultTexture;
-			pTextureManager->CreateDefaultTexture( defaultTexture );
-
-			for ( uint32_t i = 1; i <= 5; i++ )
+			auto &material = materials[ i ];
+			VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorSets( material.descriptors, poolId, layoutId, 1 ) );
+			const int maps[] = { material.baseColorTexture, material.metallicRoughnessTexture, material.normalTexture, material.emissiveTexture, material.occlusionTexture };
+			material.setTextureFlag( TEXTURE_BASE_COLOR_SRGB_BIT, false );
+			material.setTextureFlag( TEXTURE_EMISSIVE_SRGB_BIT, false );
+			for ( unsigned slot = 0; slot < 5; ++slot )
 			{
-				pRenderInfo->pDescriptors->UpdateImageDescriptor(
-					material.descriptors,
-					i, // bindings 1-5 (fragment shader textures)
-					defaultTexture.view,
-					defaultTexture.sampler,
-					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
+				const STexture *texture = nullptr;
+				if ( maps[ slot ] >= 0 )
+					texture = &textures.at( maps[ slot ] );
+				else
+				{
+					if ( !fallback )
+						fallback = &pTextureManager->GetDefaultTexture();
+					texture = fallback;
+				}
+				const bool color = slot == 0 || slot == 3;
+				const auto view = color && texture->srgbView ? texture->srgbView : texture->view;
+				if ( slot == 0 ) material.setTextureFlag( TEXTURE_BASE_COLOR_SRGB_BIT, texture->srgbView != VK_NULL_HANDLE );
+				if ( slot == 3 ) material.setTextureFlag( TEXTURE_EMISSIVE_SRGB_BIT, texture->srgbView != VK_NULL_HANDLE );
+				pRenderInfo->pDescriptors->UpdateImageDescriptor( material.descriptors, slot + 1, view, texture->sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
 			}
-
-			// Map the buffer memory
-			if ( pFragmentDescriptorsBuffer->MapMemory() != VK_SUCCESS )
-				return 0;
-
-			// Update material ubo data
-			outMaterialData.push_back( static_cast< SMaterialUBO * >( pFragmentDescriptorsBuffer->GetMappedData() ) );
-			if ( outMaterialData.back() )
-			{
-				// Reset padding
-				material.resetPadding();
-
-				// Update texture flags before copying to gpu buffer
-				material.updateTextureFlags();
-
-				// Copy just the ubo portion of the material for the gpu buffer
-				memcpy( outMaterialData.back(), &material, sizeof( SMaterialUBO ) );
-			}
-
-			unMaterialCount++;
-
-			// Update textures - bindings should match the texture bindings in the pbr fragment shader
-			if ( material.baseColorTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor( material.descriptors, 1, textures[ material.baseColorTexture ].view, textures[ material.baseColorTexture ].sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.metallicRoughnessTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor( material.descriptors, 2, textures[ material.metallicRoughnessTexture ].view, textures[ material.metallicRoughnessTexture ].sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.normalTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor( material.descriptors, 3, textures[ material.normalTexture ].view, textures[ material.normalTexture ].sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.emissiveTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor( material.descriptors, 4, textures[ material.emissiveTexture ].view, textures[ material.emissiveTexture ].sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			if ( material.occlusionTexture >= 0 )
-				pRenderInfo->pDescriptors->UpdateImageDescriptor( material.descriptors, 5, textures[ material.occlusionTexture ].view, textures[ material.occlusionTexture ].sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL );
-
-			// Update the uniform buffer descriptor
-			pRenderInfo->pDescriptors->UpdateUniformBuffer(
-				material.descriptors,
-				0, // binding = 0 in the pbr fragment shader
-				pFragmentDescriptorsBuffer->GetVkBuffer(),
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				0,					   // offset
-				sizeof( SMaterialUBO ) // size
-			);
-
+			material.resetPadding();
+			material.updateTextureFlags();
+			auto *data = reinterpret_cast< SMaterialUBO * >( mapped + stride * i );
+			std::memcpy( data, &material, sizeof( SMaterialUBO ) );
+			outMaterialData.push_back( data );
+			material.descriptorsBufferIndex = static_cast< uint32_t >( i );
+			pRenderInfo->pDescriptors->UpdateUniformBuffer( material.descriptors, 0, pFragmentDescriptorsBuffer->GetVkBuffer(), VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, stride * i, sizeof( SMaterialUBO ) );
 		}
-
-		return unMaterialCount;
+		return static_cast< uint32_t >( materials.size() );
 	}
 
 
