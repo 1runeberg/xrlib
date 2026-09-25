@@ -1979,7 +1979,8 @@ namespace xrlib
 			state.projectionLayer.viewCount = (uint32_t) state.projectionLayerViews.size();
 			state.projectionLayer.views = state.projectionLayerViews.data();
 
-			state.frameLayers.push_back( reinterpret_cast< XrCompositionLayerBaseHeader * >( &state.projectionLayer ) );
+			if ( state.sharedEyeState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT )
+				state.frameLayers.push_back( reinterpret_cast< XrCompositionLayerBaseHeader * >( &state.projectionLayer ) );
 
 			// Post application layers
 			if ( !state.postAppFrameLayers.empty() )
