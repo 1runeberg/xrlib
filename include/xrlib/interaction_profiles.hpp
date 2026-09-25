@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -58,6 +58,15 @@ namespace xrlib
 			Menu = 8,
 			System = 9,
 			Haptic = 10,
+			Shoulder = 11,
+			DpadUp = 12,
+			DpadDown = 13,
+			DpadLeft = 14,
+			DpadRight = 15,
+			ButtonA = 16,
+			ButtonB = 17,
+			ButtonX = 18,
+			ButtonY = 19,
 			ComponentEMax
 		};
 
@@ -113,6 +122,18 @@ namespace xrlib
 		const char *Path() override { return "/interaction_profiles/valve/index_controller"; }
 		XrResult AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier ) override;
 		XrResult SuggestBindings( XrInstance xrInstance, void *pOtherInfo ) override { return SuggestControllerBindings( xrInstance, pOtherInfo ); };
+	};
+
+	struct ValveFrame : public Controller
+	{
+		static constexpr const char *k_pccExtensionName = "XR_VALVE_frame_controller_interaction";
+
+		using Controller::AddBinding;
+
+		const char *Path() override { return "/interaction_profiles/valve/frame_controller_valve"; }
+
+		XrResult AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier ) override;
+		XrResult SuggestBindings( XrInstance xrInstance, void *pOtherInfo ) override { return SuggestControllerBindings( xrInstance, pOtherInfo ); }
 	};
 
 	struct BaseController
