@@ -12,6 +12,7 @@
 
 
 #pragma once
+#include <iostream>
 
 #include <xrlib/session.hpp>
 #include <xrlib/input.hpp>
