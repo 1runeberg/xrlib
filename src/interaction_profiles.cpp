@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -63,6 +63,146 @@ namespace xrlib
 
 		LogInfo( "Controller::SuggestControllerBindings", "All action bindings sent to runtime for: (%s)", Path() );
 		return xrResult;
+	}
+
+	XrResult ValveFrame::AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier )
+	{
+		if ( hand != XR_HAND_LEFT_EXT && hand != XR_HAND_RIGHT_EXT )
+			return XR_ERROR_VALIDATION_FAILURE;
+
+		const bool bLeft = hand == XR_HAND_LEFT_EXT;
+		const char *pccComponent = nullptr;
+		const char *pccQualifier = nullptr;
+
+		switch ( component )
+		{
+			case Component::GripPose:
+				pccComponent = k_pccGripPose;
+				break;
+			case Component::AimPose:
+				pccComponent = k_pccAimPose;
+				break;
+			case Component::Haptic:
+				pccComponent = k_pccHaptic;
+				break;
+			case Component::Trigger:
+				pccComponent = k_pccTrigger;
+				break;
+			case Component::Squeeze:
+				pccComponent = k_pccSqueeze;
+				break;
+			case Component::AxisControl:
+				pccComponent = k_pccThumbstick;
+				break;
+			case Component::PrimaryButton:
+				pccComponent = bLeft ? "/dpad_down" : k_pccA;
+				break;
+			case Component::SecondaryButton:
+				pccComponent = bLeft ? "/dpad_right" : k_pccB;
+				break;
+			case Component::Menu:
+				pccComponent = bLeft ? "/view" : k_pccMenu;
+				break;
+			case Component::System:
+				pccComponent = k_pccSystem;
+				break;
+			case Component::Shoulder:
+				pccComponent = "/shoulder";
+				break;
+			case Component::DpadUp:
+				pccComponent = bLeft ? "/dpad_up" : nullptr;
+				break;
+			case Component::DpadDown:
+				pccComponent = bLeft ? "/dpad_down" : nullptr;
+				break;
+			case Component::DpadLeft:
+				pccComponent = bLeft ? "/dpad_left" : nullptr;
+				break;
+			case Component::DpadRight:
+				pccComponent = bLeft ? "/dpad_right" : nullptr;
+				break;
+			case Component::ButtonA:
+				pccComponent = bLeft ? nullptr : k_pccA;
+				break;
+			case Component::ButtonB:
+				pccComponent = bLeft ? nullptr : k_pccB;
+				break;
+			case Component::ButtonX:
+				pccComponent = bLeft ? nullptr : k_pccX;
+				break;
+			case Component::ButtonY:
+				pccComponent = bLeft ? nullptr : k_pccY;
+				break;
+			default:
+				break;
+		}
+
+		// Match BaseController's additive binding behaviour for unavailable components
+		if ( !pccComponent )
+			return XR_SUCCESS;
+
+		if ( component == Component::GripPose || component == Component::AimPose || component == Component::Haptic )
+		{
+			if ( qualifier != Qualifier::None )
+				return XR_ERROR_PATH_UNSUPPORTED;
+
+			pccQualifier = "";
+		}
+		else if ( component == Component::AxisControl )
+		{
+			switch ( qualifier )
+			{
+				case Qualifier::None:
+					pccQualifier = "";
+					break;
+				case Qualifier::Click:
+					pccQualifier = k_pccClick;
+					break;
+				case Qualifier::Touch:
+					pccQualifier = k_pccTouch;
+					break;
+				case Qualifier::X:
+					pccQualifier = k_pccX;
+					break;
+				case Qualifier::Y:
+					pccQualifier = k_pccY;
+					break;
+				default:
+					return XR_ERROR_PATH_UNSUPPORTED;
+			}
+		}
+		else
+		{
+			const bool bAnalog = component == Component::Trigger || component == Component::Squeeze;
+
+			switch ( qualifier )
+			{
+				case Qualifier::None:
+					pccQualifier = bAnalog ? k_pccValue : k_pccClick;
+					break;
+				case Qualifier::Click:
+					pccQualifier = k_pccClick;
+					break;
+				case Qualifier::Touch:
+					pccQualifier = k_pccTouch;
+					break;
+				case Qualifier::Value:
+					if ( !bAnalog )
+						return XR_ERROR_PATH_UNSUPPORTED;
+
+					pccQualifier = k_pccValue;
+					break;
+				default:
+					return XR_ERROR_PATH_UNSUPPORTED;
+			}
+		}
+
+		std::string sBinding = bLeft ? k_pccLeftHand : k_pccRightHand;
+		sBinding += component == Component::Haptic ? k_pccOutput : k_pccInput;
+		sBinding += pccComponent;
+		sBinding += pccQualifier;
+
+		return Controller::AddBinding( xrInstance, action, sBinding );
 	}
 
 	XrResult ValveIndex::AddBinding( XrInstance xrInstance, XrAction action, XrHandEXT hand, Controller::Component component, Controller::Qualifier qualifier )
