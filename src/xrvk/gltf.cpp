@@ -11,11 +11,17 @@
 */
 
 
-#ifdef XR_USE_PLATFORM_ANDROID
-#define TINYGLTF_ANDROID_LOAD_FROM_ASSETS
-#endif
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
+#include <fastgltf/core.hpp>
+#include <fastgltf/tools.hpp>
+#include <limits>
+#include <span>
+#include <chrono>
+#include <atomic>
+#include <future>
+#include <thread>
 
-#include <xrvk/tinygltf.hpp>
 #include <xrvk/gltf.hpp>
 #include <xrvk/texture.hpp>
 
@@ -24,8 +30,19 @@
 namespace fs = std::filesystem;
 namespace xrlib
 {
+	static double ElapsedMilliseconds( std::chrono::steady_clock::time_point start )
+	{
+		return std::chrono::duration< double, std::milli >( std::chrono::steady_clock::now() - start ).count();
+	}
+
 	CGltf::CGltf( CSession *pSession )
+		: CGltf( pSession, SGltfLoadOptions {} )
+	{
+	}
+
+	CGltf::CGltf( CSession *pSession, SGltfLoadOptions options )
 		: m_pSession( pSession )
+		, m_options( options )
 	{
 		assert( pSession );
 	}
@@ -34,185 +51,202 @@ namespace xrlib
 	{
 	}
 
-	bool CGltf::LoadAndParse( CRenderModel *outRenderModel, VkCommandPool commandPool, const std::string &sFilename, XrVector3f scale )
+	static bool DecodeImage( SGltfImage &outImage, std::span< const std::byte > bytes )
 	{
-		std::unique_ptr< TinyGLTF > pGltfLoader = std::make_unique< TinyGLTF >();
-		std::unique_ptr< Model > pModel = std::make_unique< Model >();
+		if ( bytes.empty() || bytes.size() > static_cast< size_t >( std::numeric_limits< int >::max() ) )
+			return false;
 
-		// Check file validity
-		bool bResult = false;
-		std::string sError, sWarn;
-
-		fs::path file( sFilename );
-
-        #ifndef XR_USE_PLATFORM_ANDROID
-            if ( file.empty() )
-            {
-				LogError( XRLIB_NAME, "Error: Attempted to load an empty file!" );
-                return false;
-            }
-
-            if ( !fs::exists( file ) )
-            {
-				LogError( XRLIB_NAME, "Error: Attempted to load a non-existent file: %s", sFilename.c_str() );
-                return false;
-            }
-        #endif
-
-		// Load gltf file based on extension
-		if ( file.extension() == ".glb" )
+		const auto *pBytes = reinterpret_cast< const stbi_uc * >( bytes.data() );
+		const int nSize = static_cast< int >( bytes.size() );
+		int nChannels = 0;
+		stbi_uc *pPixels = nullptr;
+		if ( stbi_is_16_bit_from_memory( pBytes, nSize ) )
 		{
-			bResult = pGltfLoader->LoadBinaryFromFile( pModel.get(), &sError, &sWarn, sFilename );
+			pPixels = reinterpret_cast< stbi_uc * >( stbi_load_16_from_memory( pBytes, nSize, &outImage.width, &outImage.height, &nChannels, 4 ) );
+			outImage.bits = 16;
 		}
-		else if ( file.extension() == ".gltf" )
+		if ( !pPixels )
 		{
-			bResult = pGltfLoader->LoadASCIIFromFile( pModel.get(), &sError, &sWarn, sFilename );
+			pPixels = stbi_load_from_memory( pBytes, nSize, &outImage.width, &outImage.height, &nChannels, 4 );
+			outImage.bits = 8;
 		}
-		else
+		if ( !pPixels )
 		{
-			LogError( XRLIB_NAME, "Error: Invalid file format: %s", sFilename.c_str() );
+			LogError( XRLIB_NAME, "Failed to decode glTF image: %s", outImage.name.c_str() );
 			return false;
 		}
 
-		// Show warnings and errors
-		if ( !sWarn.empty() )
-			LogWarning( XRLIB_NAME, "Warning loading %s: %s", sFilename.c_str(), sWarn.c_str() );
-
-		if ( !sError.empty() )
-			LogError( XRLIB_NAME, "Error loading %s: %s", sFilename.c_str(), sError.c_str() );
-        
-
-		if ( !bResult )
-		{
-			LogError( XRLIB_NAME, "Failed to parse gltf file: %s", sFilename.c_str() );
-			return false;
-		}
-
-		// Parse Textures
-		ParseTextures( outRenderModel, commandPool, *pModel );
-
-		// Parse Materials
-		ParseMaterials( outRenderModel, *pModel );
-
-		// Parse Skins
-		ParseSkins( outRenderModel, *pModel );
-
-		// Process all nodes in the scene
-		for ( size_t i = 0; i < pModel->scenes[ 0 ].nodes.size(); i++ )
-		{
-			const tinygltf::Node &node = pModel->nodes[ pModel->scenes[ 0 ].nodes[ i ] ];
-			ProcessNode( *pModel, node, outRenderModel->vertices, outRenderModel->indices, outRenderModel->materialSections );
-		}
-
-		// Set scale
-		for ( size_t i = 0; i < outRenderModel->GetInstanceCount(); i++ )
-		{
-			outRenderModel->instances[ i ].scale = scale;
-		}
-		
+		std::unique_ptr< stbi_uc, decltype( &stbi_image_free ) > pixels( pPixels, stbi_image_free );
+		const size_t unSize = static_cast< size_t >( outImage.width ) * outImage.height * outImage.component * ( outImage.bits / 8 );
+		outImage.image.assign( pPixels, pPixels + unSize );
 		return true;
 	}
 
-	bool CGltf::LoadFromDisk( CRenderModel *outRenderModel, tinygltf::Model *outModel, const std::string &sFilename, XrVector3f scale ) 
-	{ 
-		std::unique_ptr< TinyGLTF > pGltfLoader = std::make_unique< TinyGLTF >();
-
-		// Check file validity
-		bool bResult = false;
-		std::string sError, sWarn;
-
-		fs::path file( sFilename );
-
-		#ifndef XR_USE_PLATFORM_ANDROID
-		if ( file.empty() )
+	static bool LoadImages( SGltfModel &outModel, const fs::path &sDirectory, uint32_t unMaxWorkers )
+	{
+		outModel.images.resize( outModel.asset.images.size() );
+		auto LoadImage = [ & ]( size_t i )
 		{
-			LogError( XRLIB_NAME, "Error: Attempted to load an empty file!" );
+			const auto &image = outModel.asset.images[ i ];
+			auto &outImage = outModel.images[ i ];
+			outImage.name = image.name;
+			bool bLoaded = std::visit(
+				fastgltf::visitor {
+					[ & ]( const fastgltf::sources::Array &source ) { return DecodeImage( outImage, { source.bytes.data(), source.bytes.size() } ); },
+					[ & ]( const fastgltf::sources::BufferView &source )
+					{
+						const auto bytes = fastgltf::DefaultBufferDataAdapter {}( outModel.asset, source.bufferViewIndex );
+						return DecodeImage( outImage, { bytes.data(), bytes.size() } );
+					},
+					[ & ]( const fastgltf::sources::URI &source )
+					{
+						outImage.uri = source.uri.string();
+						if ( !source.uri.isLocalPath() )
+							return false;
+						const fs::path file = sDirectory / source.uri.fspath();
+#ifdef XR_USE_PLATFORM_ANDROID
+						auto data = fastgltf::AndroidGltfDataBuffer::FromAsset( file );
+#else
+						auto data = fastgltf::GltfDataBuffer::FromPath( file );
+#endif
+						if ( data.error() != fastgltf::Error::None || source.fileByteOffset > data->totalSize() )
+							return false;
+						auto bytes = static_cast< fastgltf::span< std::byte > >( data.get() );
+						return DecodeImage( outImage, { bytes.data() + source.fileByteOffset, bytes.size() - source.fileByteOffset } );
+					},
+					[]( const auto & ) { return false; } },
+				image.data );
+			if ( !bLoaded )
+			{
+				LogError( XRLIB_NAME, "Failed to load glTF image: %s", outImage.name.c_str() );
+				return false;
+			}
+			return true;
+		};
+
+		const size_t unWorkers = std::min( outModel.images.size(), static_cast< size_t >( std::min( std::max( 1u, unMaxWorkers ), std::max( 1u, std::thread::hardware_concurrency() ) ) ) );
+		if ( unWorkers <= 1 )
+		{
+			for ( size_t i = 0; i < outModel.images.size(); ++i )
+				if ( !LoadImage( i ) )
+					return false;
+			return true;
+		}
+
+		// Each decoder owns its output slot. Parsed buffers remain read-only until all workers finish
+		std::atomic< size_t > nextImage { 0 };
+		std::vector< std::future< bool > > workers;
+		workers.reserve( unWorkers );
+		for ( size_t i = 0; i < unWorkers; ++i )
+			workers.push_back(
+				std::async(
+					std::launch::async,
+					[ & ]
+					{
+						bool loaded = true;
+						for ( size_t index = nextImage.fetch_add( 1 ); index < outModel.images.size(); index = nextImage.fetch_add( 1 ) )
+							loaded = LoadImage( index ) && loaded;
+						return loaded;
+					} ) );
+		bool loaded = true;
+		for ( auto &worker : workers )
+			loaded = worker.get() && loaded;
+		return loaded;
+	}
+
+	bool CGltf::LoadAndParse( CRenderModel *outRenderModel, VkCommandPool commandPool, const std::string &sFilename, XrVector3f scale )
+	{
+		SGltfModel model;
+		if ( !LoadFromDisk( outRenderModel, &model, sFilename, scale ) )
 			return false;
-		}
+		ParseModel( outRenderModel, &model, commandPool );
+		return true;
+	}
 
-		if ( !fs::exists( file ) )
-		{
-			LogError( XRLIB_NAME, "Error: Attempted to load a non-existent file: %s", sFilename.c_str() );
+	bool CGltf::LoadFromDisk( CRenderModel *outRenderModel, SGltfModel *outModel, const std::string &sFilename, XrVector3f scale )
+	{
+		const fs::path file( sFilename );
+		if ( !outRenderModel || !outModel || file.empty() )
 			return false;
-		}
-		#endif
-
-		// Debug: Log disk read performance
-		//std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
-		//LogDebug( "CGltf::LoadFromDisk", "Started loading gltf file: %s", sFilename.c_str() );
-
-		// Load gltf file based on extension
-		if ( file.extension() == ".glb" )
-		{
-			bResult = pGltfLoader->LoadBinaryFromFile( outModel, &sError, &sWarn, sFilename );
-		}
-		else if ( file.extension() == ".gltf" )
-		{
-			bResult = pGltfLoader->LoadASCIIFromFile( outModel, &sError, &sWarn, sFilename );
-		}
-		else
+		if ( file.extension() != ".glb" && file.extension() != ".gltf" )
 		{
 			LogError( XRLIB_NAME, "Error: Invalid file format: %s", sFilename.c_str() );
 			return false;
 		}
 
-		// Show warnings and errors
-		if ( !sWarn.empty() )
-			LogWarning( XRLIB_NAME, "Warning loading %s: %s", sFilename.c_str(), sWarn.c_str() );
-
-		if ( !sError.empty() )
-			LogError( XRLIB_NAME, "Error loading %s: %s", sFilename.c_str(), sError.c_str() );
-
-		if ( !bResult )
+		SGltfLoadTimings timings;
+		auto started = std::chrono::steady_clock::now();
+#ifdef XR_USE_PLATFORM_ANDROID
+		auto data = fastgltf::AndroidGltfDataBuffer::FromAsset( file );
+#else
+		auto data = fastgltf::GltfDataBuffer::FromPath( file );
+#endif
+		if ( data.error() != fastgltf::Error::None )
 		{
-			LogError( XRLIB_NAME, "Failed to parse gltf file: %s", sFilename.c_str() );
+			LogError( XRLIB_NAME, "Failed to read glTF file: %s (%s)", sFilename.c_str(), fastgltf::getErrorName( data.error() ).data() );
 			return false;
 		}
 
-		// Set scale
-		for ( size_t i = 0; i < outRenderModel->GetInstanceCount(); i++ )
+		timings.diskReadMs = ElapsedMilliseconds( started );
+		started = std::chrono::steady_clock::now();
+		// Keep each parser local so disk loading can run on worker threads
+		fastgltf::Parser parser;
+		auto asset = parser.loadGltf( data.get(), file.parent_path(), fastgltf::Options::LoadExternalBuffers );
+		if ( asset.error() != fastgltf::Error::None )
 		{
-			outRenderModel->instances[ i ].scale = scale;
+			LogError( XRLIB_NAME, "Failed to parse glTF file: %s (%s)", sFilename.c_str(), fastgltf::getErrorName( asset.error() ).data() );
+			return false;
 		}
 
-		// Debug: Log disk read performance
-		//std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
-		//std::chrono::duration< double > duration = end - start;
-		//LogDebug( "CGltf::LoadFromDisk", "Finished loading gltf file: %s in %.4f seconds", sFilename.c_str(), duration.count() );
+		SGltfModel model;
+		model.asset = std::move( asset.get() );
+		if ( model.asset.scenes.empty() || fastgltf::validate( model.asset ) != fastgltf::Error::None )
+		{
+			LogError( XRLIB_NAME, "Invalid glTF scene: %s", sFilename.c_str() );
+			return false;
+		}
+		timings.parseMs = ElapsedMilliseconds( started );
+		started = std::chrono::steady_clock::now();
+		if ( !LoadImages( model, file.parent_path(), m_options.imageDecodeWorkers ) )
+			return false;
+		timings.imageDecodeMs = ElapsedMilliseconds( started );
+		model.timings = timings;
+		*outModel = std::move( model );
 
-		return true; 
+		// Set scale
+		for ( size_t i = 0; i < outRenderModel->GetInstanceCount(); ++i )
+			outRenderModel->instances[ i ].scale = scale;
+		return true;
 	}
 
-	void CGltf::ParseModel( CRenderModel *outRenderModel, tinygltf::Model *pModel, VkCommandPool commandPool ) 
-	{ 
-		// Parse Textures
+	void CGltf::ParseModel( CRenderModel *outRenderModel, SGltfModel *pModel, VkCommandPool commandPool )
+	{
+		auto started = std::chrono::steady_clock::now();
 		ParseTextures( outRenderModel, commandPool, *pModel );
-
-		// Parse Materials
-		ParseMaterials( outRenderModel, *pModel );
-
-		// Parse Skins
-		ParseSkins( outRenderModel, *pModel );
+		pModel->timings.textureUploadMs = ElapsedMilliseconds( started );
+		started = std::chrono::steady_clock::now();
+		ParseMaterials( outRenderModel, pModel->asset );
+		ParseSkins( outRenderModel, pModel->asset );
 
 		// Process all nodes in the scene
-		for ( size_t i = 0; i < pModel->scenes[ 0 ].nodes.size(); i++ )
+		for ( size_t unNode : pModel->asset.scenes[ 0 ].nodeIndices )
 		{
-			const tinygltf::Node &node = pModel->nodes[ pModel->scenes[ 0 ].nodes[ i ] ];
-			ProcessNode( *pModel, node, outRenderModel->vertices, outRenderModel->indices, outRenderModel->materialSections );
+			ProcessNode( pModel->asset, pModel->asset.nodes[ unNode ], outRenderModel->vertices, outRenderModel->indices, outRenderModel->materialSections );
 		}
+		pModel->timings.meshConversionMs = ElapsedMilliseconds( started );
 	}
 
 	void CGltf::ProcessNode( 
-		const tinygltf::Model &model, 
-		const tinygltf::Node &node, 
+		const fastgltf::Asset &model,
+		const fastgltf::Node &node,
 		std::vector< SMeshVertex > &vertices, 
 		std::vector< uint32_t > &indices, 
 		std::vector< SMeshSection > &materialSections )
 	{
 		// Process mesh if present
-		if ( node.mesh >= 0 )
+		if ( node.meshIndex.has_value() )
 		{
-			ProcessMesh( model, model.meshes[ node.mesh ], vertices, indices, materialSections );
+			ProcessMesh( model, model.meshes[ *node.meshIndex ], vertices, indices, materialSections );
 		}
 
 		// Process child nodes
@@ -223,8 +257,8 @@ namespace xrlib
 	}
 
 	void CGltf::ProcessMesh( 
-		const tinygltf::Model &model, 
-		const tinygltf::Mesh &mesh, 
+		const fastgltf::Asset &model,
+		const fastgltf::Mesh &mesh,
 		std::vector< SMeshVertex > &vertices, 
 		std::vector< uint32_t > &indices, 
 		std::vector< SMeshSection > &materialSections )
@@ -240,190 +274,94 @@ namespace xrlib
 			uint32_t vertexBase = vertices.size();
 
 			// Get accessor for vertex positions (required)
-			const tinygltf::Accessor &posAccessor = model.accessors[ primitive.attributes.at( "POSITION" ) ];
-			const tinygltf::BufferView &posView = model.bufferViews[ posAccessor.bufferView ];
-			const float *positions = reinterpret_cast< const float * >( &( model.buffers[ posView.buffer ].data[ posView.byteOffset + posAccessor.byteOffset ] ) );
-
-			// Process each vertex
-			for ( size_t i = 0; i < posAccessor.count; i++ )
+			const auto position = primitive.findAttribute( "POSITION" );
+			if ( position == primitive.attributes.end() )
+				throw std::runtime_error( "Missing glTF vertex positions" );
+			const fastgltf::Accessor &posAccessor = model.accessors[ position->accessorIndex ];
+			vertices.resize( vertexBase + posAccessor.count );
+			for ( size_t i = vertexBase; i < vertices.size(); ++i )
 			{
-				SMeshVertex vertex {};
+				vertices[ i ] = {};
+				vertices[ i ].color0 = { 1.0f, 1.0f, 1.0f };
+				if ( primitive.findAttribute( "NORMAL" ) != primitive.attributes.end() )
+					vertices[ i ].tangent = { 1.0f, 0.0f, 0.0f, 1.0f };
+			}
 
-				// Position (required)
-				vertex.position = { positions[ i * 3 ], positions[ i * 3 + 1 ], positions[ i * 3 + 2 ] };
-
-				// Normal (optional)
-				if ( primitive.attributes.find( "NORMAL" ) != primitive.attributes.end() )
+			// Read attributes through fastgltf's accessor tools, including strides and normalization
+			auto ReadAttribute = [&]< typename T >( const char *sName, auto pfnAssign ) {
+				const auto attribute = primitive.findAttribute( sName );
+				if ( attribute == primitive.attributes.end() )
+					return;
+				const auto &accessor = model.accessors[ attribute->accessorIndex ];
+				if ( accessor.count != posAccessor.count )
+					throw std::runtime_error( "Mismatched glTF vertex attribute count" );
+				fastgltf::iterateAccessorWithIndex< T >( model, accessor, [&]( const T &value, size_t i ) {
+					pfnAssign( vertices[ vertexBase + i ], value );
+				} );
+			};
+			ReadAttribute.operator()< fastgltf::math::fvec3 >( "POSITION", []( SMeshVertex &vertex, const auto &value ) {
+				vertex.position = { value[ 0 ], value[ 1 ], value[ 2 ] };
+			} );
+			ReadAttribute.operator()< fastgltf::math::fvec3 >( "NORMAL", []( SMeshVertex &vertex, const auto &value ) {
+				vertex.normal = { value[ 0 ], value[ 1 ], value[ 2 ] };
+			} );
+			ReadAttribute.operator()< fastgltf::math::fvec2 >( "TEXCOORD_0", []( SMeshVertex &vertex, const auto &value ) {
+				vertex.uv0 = { value[ 0 ], value[ 1 ] };
+			} );
+			ReadAttribute.operator()< fastgltf::math::fvec2 >( "TEXCOORD_1", []( SMeshVertex &vertex, const auto &value ) {
+				vertex.uv1 = { value[ 0 ], value[ 1 ] };
+			} );
+			ReadAttribute.operator()< fastgltf::math::fvec4 >( "TANGENT", []( SMeshVertex &vertex, const auto &value ) {
+				vertex.tangent = { value[ 0 ], value[ 1 ], value[ 2 ], value[ 3 ] };
+			} );
+			const auto color = primitive.findAttribute( "COLOR_0" );
+			if ( color != primitive.attributes.end() && model.accessors[ color->accessorIndex ].type == fastgltf::AccessorType::Vec4 )
+			{
+				ReadAttribute.operator()< fastgltf::math::fvec4 >( "COLOR_0", []( SMeshVertex &vertex, const auto &value ) {
+					vertex.color0 = { value[ 0 ], value[ 1 ], value[ 2 ] };
+				} );
+			}
+			else
+			{
+				ReadAttribute.operator()< fastgltf::math::fvec3 >( "COLOR_0", []( SMeshVertex &vertex, const auto &value ) {
+					vertex.color0 = { value[ 0 ], value[ 1 ], value[ 2 ] };
+				} );
+			}
+			ReadAttribute.operator()< fastgltf::math::uvec4 >( "JOINTS_0", []( SMeshVertex &vertex, const auto &value ) {
+				for ( int j = 0; j < JOINT_INFLUENCE_COUNT; ++j )
+					vertex.joints[ j ] = value[ j ];
+			} );
+			ReadAttribute.operator()< fastgltf::math::fvec4 >( "WEIGHTS_0", []( SMeshVertex &vertex, const auto &value ) {
+				float fSum = 0.0f;
+				for ( int j = 0; j < JOINT_INFLUENCE_COUNT; ++j )
 				{
-					const tinygltf::Accessor &normalAccessor = model.accessors[ primitive.attributes.at( "NORMAL" ) ];
-					const tinygltf::BufferView &normalView = model.bufferViews[ normalAccessor.bufferView ];
-					const float *normals = reinterpret_cast< const float * >( &( model.buffers[ normalView.buffer ].data[ normalView.byteOffset + normalAccessor.byteOffset ] ) );
-
-					vertex.normal = { normals[ i * 3 ], normals[ i * 3 + 1 ], normals[ i * 3 + 2 ] };
+					vertex.weights[ j ] = value[ j ];
+					fSum += value[ j ];
 				}
-
-				// Texture coordinates (optional)
-				if ( primitive.attributes.find( "TEXCOORD_0" ) != primitive.attributes.end() )
+				if ( fSum > 1.0f )
 				{
-					const tinygltf::Accessor &uvAccessor = model.accessors[ primitive.attributes.at( "TEXCOORD_0" ) ];
-					const tinygltf::BufferView &uvView = model.bufferViews[ uvAccessor.bufferView ];
-					const float *uvs = reinterpret_cast< const float * >( &( model.buffers[ uvView.buffer ].data[ uvView.byteOffset + uvAccessor.byteOffset ] ) );
-
-					vertex.uv0 = { uvs[ i * 2 ], uvs[ i * 2 + 1 ] };
-				}
-
-				// Second set of texture coordinates (optional)
-				if ( primitive.attributes.find( "TEXCOORD_1" ) != primitive.attributes.end() )
-				{
-					const tinygltf::Accessor &uvAccessor = model.accessors[ primitive.attributes.at( "TEXCOORD_1" ) ];
-					const tinygltf::BufferView &uvView = model.bufferViews[ uvAccessor.bufferView ];
-					const float *uvs = reinterpret_cast< const float * >( &( model.buffers[ uvView.buffer ].data[ uvView.byteOffset + uvAccessor.byteOffset ] ) );
-
-					vertex.uv1 = { uvs[ i * 2 ], uvs[ i * 2 + 1 ] };
-				}
-
-				// Tangents (optional but important for normal mapping)
-				if ( primitive.attributes.find( "TANGENT" ) != primitive.attributes.end() )
-				{
-					const tinygltf::Accessor &tangentAccessor = model.accessors[ primitive.attributes.at( "TANGENT" ) ];
-					const tinygltf::BufferView &tangentView = model.bufferViews[ tangentAccessor.bufferView ];
-					const float *tangents = reinterpret_cast< const float * >( &( model.buffers[ tangentView.buffer ].data[ tangentView.byteOffset + tangentAccessor.byteOffset ] ) );
-
-					vertex.tangent = { tangents[ i * 4 ], tangents[ i * 4 + 1 ], tangents[ i * 4 + 2 ], tangents[ i * 4 + 3 ] };
-				}
-				else if ( primitive.attributes.find( "NORMAL" ) != primitive.attributes.end() )
-				{
-					vertex.tangent = { 1.0f, 0.0f, 0.0f, 1.0f };
-				}
-
-				// Color (optional)
-				if ( primitive.attributes.find( "COLOR_0" ) != primitive.attributes.end() )
-				{
-					const tinygltf::Accessor &colorAccessor = model.accessors[ primitive.attributes.at( "COLOR_0" ) ];
-					const tinygltf::BufferView &colorView = model.bufferViews[ colorAccessor.bufferView ];
-					const float *colors = reinterpret_cast< const float * >( &( model.buffers[ colorView.buffer ].data[ colorView.byteOffset + colorAccessor.byteOffset ] ) );
-
-					vertex.color0 = { colors[ i * 3 ], colors[ i * 3 + 1 ], colors[ i * 3 + 2 ] };
-				}
-				else
-				{
-					vertex.color0 = { 1.0f, 1.0f, 1.0f };
-				}
-
-				// Joint indices (optional)
-				if ( primitive.attributes.find( "JOINTS_0" ) != primitive.attributes.end() )
-				{
-					const tinygltf::Accessor &jointAccessor = model.accessors[ primitive.attributes.at( "JOINTS_0" ) ];
-					const tinygltf::BufferView &jointView = model.bufferViews[ jointAccessor.bufferView ];
-
-					// Handle different component types for joints
-					if ( jointAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE )
-					{
-						const uint8_t *joints = reinterpret_cast< const uint8_t * >( &( model.buffers[ jointView.buffer ].data[ jointView.byteOffset + jointAccessor.byteOffset ] ) );
-						for ( int j = 0; j < JOINT_INFLUENCE_COUNT; j++ )
-						{
-							vertex.joints[ j ] = static_cast< uint32_t >( joints[ i * 4 + j ] );
-						}
-					}
-					else if ( jointAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT )
-					{
-						const uint16_t *joints = reinterpret_cast< const uint16_t * >( &( model.buffers[ jointView.buffer ].data[ jointView.byteOffset + jointAccessor.byteOffset ] ) );
-						for ( int j = 0; j < JOINT_INFLUENCE_COUNT; j++ )
-						{
-							vertex.joints[ j ] = static_cast< uint32_t >( joints[ i * 4 + j ] );
-						}
-					}
-				}
-
-				// Joint weights (optional)
-				if ( primitive.attributes.find( "WEIGHTS_0" ) != primitive.attributes.end() )
-				{
-					const tinygltf::Accessor &weightAccessor = model.accessors[ primitive.attributes.at( "WEIGHTS_0" ) ];
-					const tinygltf::BufferView &weightView = model.bufferViews[ weightAccessor.bufferView ];
-					const float *weights = reinterpret_cast< const float * >( &( model.buffers[ weightView.buffer ].data[ weightView.byteOffset + weightAccessor.byteOffset ] ) );
-
-					for ( int j = 0; j < JOINT_INFLUENCE_COUNT; j++ )
-					{
-						vertex.weights[ j ] = weights[ i * 4 + j ];
-					}
-
-					// Normalize weights (in case file isn't up to spec)
-					float weightSum = 0.0f;
 					for ( int j = 0; j < JOINT_INFLUENCE_COUNT; ++j )
-					{
-						weightSum += vertex.weights[ j ];
-					}
-
-					if ( weightSum > 1.0f )
-					{
-						for ( int j = 0; j < JOINT_INFLUENCE_COUNT; ++j )
-						{
-							vertex.weights[ j ] /= weightSum;
-						}
-					}
+						vertex.weights[ j ] /= fSum;
 				}
-				else if ( primitive.attributes.find( "JOINTS_0" ) != primitive.attributes.end() )
-				{
-					// If we have joints but no weights, rest weights to 0
-					for ( int j = 1; j < JOINT_INFLUENCE_COUNT; ++j )
-					{
-						vertex.weights[ j ] = 0.0f;
-					}
-
-					// Then assign full weight to the first joint
-					vertex.weights[ 0 ] = 1.0f;
-				}
-
-				vertices.push_back( vertex );
+			} );
+			if ( primitive.findAttribute( "WEIGHTS_0" ) == primitive.attributes.end() && primitive.findAttribute( "JOINTS_0" ) != primitive.attributes.end() )
+			{
+				for ( size_t i = vertexBase; i < vertices.size(); ++i )
+					vertices[ i ].weights[ 0 ] = 1.0f;
 			}
 
 			// Process indices
-			if ( primitive.indices >= 0 )
+			if ( primitive.indicesAccessor.has_value() )
 			{
-				const tinygltf::Accessor &accessor = model.accessors[ primitive.indices ];
+				const fastgltf::Accessor &accessor = model.accessors[ *primitive.indicesAccessor ];
 				const uint32_t numIndices = accessor.count;
-				const tinygltf::BufferView &indexView = model.bufferViews[ accessor.bufferView ];
-
-				// Check component type to determine index size
-				switch ( accessor.componentType )
-				{
-					case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-					{
-						// 16-bit indices
-						const uint16_t *indicesArray = reinterpret_cast< const uint16_t * >( &( model.buffers[ indexView.buffer ].data[ indexView.byteOffset + accessor.byteOffset ] ) );
-						for ( size_t i = 0; i < numIndices; i++ )
-						{
-							indices.push_back( static_cast< uint32_t >( indicesArray[ i ] ) + vertexBase );
-						}
-						break;
-					}
-					case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-					{
-						// 32-bit indices
-						const uint32_t *indicesArray = reinterpret_cast< const uint32_t * >( &( model.buffers[ indexView.buffer ].data[ indexView.byteOffset + accessor.byteOffset ] ) );
-						for ( size_t i = 0; i < numIndices; i++ )
-						{
-							indices.push_back( indicesArray[ i ] + vertexBase );
-						}
-						break;
-					}
-					case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-					{
-						// 8-bit indices
-						const uint8_t *indicesArray = reinterpret_cast< const uint8_t * >( &( model.buffers[ indexView.buffer ].data[ indexView.byteOffset + accessor.byteOffset ] ) );
-						for ( size_t i = 0; i < numIndices; i++ )
-						{
-							indices.push_back( static_cast< uint32_t >( indicesArray[ i ] ) + vertexBase );
-						}
-						break;
-					}
-					default:
-						throw std::runtime_error( "Unsupported index component type" );
-				}
+				fastgltf::iterateAccessor< uint32_t >( model, accessor, [&]( uint32_t unIndex ) {
+					indices.push_back( unIndex + vertexBase );
+				} );
 
 				// Material section
-				uint32_t materialIndex = primitive.material >= 0 ? primitive.material : 0;
-				if ( primitive.material >= 0 )
+				uint32_t materialIndex = static_cast< uint32_t >( primitive.materialIndex.value_or( 0 ) );
+				if ( primitive.materialIndex.has_value() )
 				{
 					// If material changes, add the last section and create a new one
 					if ( materialIndex != currentMaterialIndex )
@@ -466,8 +404,8 @@ namespace xrlib
 				}
 
 				// Update material section tracking
-				uint32_t materialIndex = primitive.material >= 0 ? primitive.material : 0;
-				if ( primitive.material >= 0 )
+				uint32_t materialIndex = static_cast< uint32_t >( primitive.materialIndex.value_or( 0 ) );
+				if ( primitive.materialIndex.has_value() )
 				{
 					if ( materialIndex != currentMaterialIndex )
 					{
@@ -516,33 +454,44 @@ namespace xrlib
 
 	}
 
-	void CGltf::ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const tinygltf::Model &model ) 
+	void CGltf::ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model )
 	{
-		if ( model.textures.size() < 1 )
+		if ( model.asset.textures.size() < 1 )
 			return;
 
-		outRenderModel->textures.reserve( model.textures.size() );
-		for ( const auto &gltfTexture : model.textures )
+		const size_t firstTexture = outRenderModel->textures.size();
+		outRenderModel->textures.reserve( firstTexture + model.asset.textures.size() );
+		for ( const auto &gltfTexture : model.asset.textures )
 		{
-			STexture texture;
-			ParseTexture( &texture, commandPool, model, gltfTexture );
-			outRenderModel->textures.push_back( texture );
+			outRenderModel->textures.emplace_back();
+			ParseTexture( &outRenderModel->textures.back(), commandPool, model, gltfTexture );
+		}
+		if ( m_options.batchTextureUploads )
+		{
+			std::vector< vkutils::SImageUpload > uploads;
+			for ( size_t i = firstTexture; i < outRenderModel->textures.size(); ++i )
+			{
+				const auto &texture = outRenderModel->textures[ i ];
+				if ( texture.image && !texture.data.empty() )
+					uploads.push_back( { texture.image, texture.data, static_cast< uint32_t >( texture.width ), static_cast< uint32_t >( texture.height ), texture.format } );
+			}
+			VK_CHECK_RESULT( vkutils::UploadTextureDataToImages( m_pSession->GetVulkan()->GetVkLogicalDevice(), m_pSession->GetVulkan()->GetVkPhysicalDevice(), commandPool, m_pSession->GetVulkan()->GetVkQueue_Graphics(), uploads ) );
 		}
 	}
 
-	void CGltf::ParseTexture( STexture *outTexture, VkCommandPool commandPool, const tinygltf::Model &model, const tinygltf::Texture &gltfTexture ) 
+	void CGltf::ParseTexture( STexture *outTexture, VkCommandPool commandPool, const SGltfModel &model, const fastgltf::Texture &gltfTexture )
 	{
 		// Get the image data
-		if ( gltfTexture.source < 0 || gltfTexture.source >= static_cast< int >( model.images.size() ) )
+		if ( !gltfTexture.imageIndex || *gltfTexture.imageIndex >= model.images.size() )
 		{
-			LogError( "CGltf::ParseTexture", "Invalid texture source index: %d", gltfTexture.source );
+			LogError( "CGltf::ParseTexture", "Invalid texture source index" );
 			return;
 		}
 
-		const tinygltf::Image &image = model.images[ gltfTexture.source ];
+		const SGltfImage &image = model.images[ *gltfTexture.imageIndex ];
 
 		// Basic texture properties
-		outTexture->name = gltfTexture.name.empty() ? image.name : gltfTexture.name;
+		outTexture->name = gltfTexture.name.empty() ? image.name : std::string( gltfTexture.name );
 		outTexture->uri = image.uri;
 		outTexture->width = image.width;
 		outTexture->height = image.height;
@@ -599,20 +548,20 @@ namespace xrlib
 		}
 
 		// Parse sampler if present
-		if ( gltfTexture.sampler >= 0 && gltfTexture.sampler < static_cast< int >( model.samplers.size() ) )
+		if ( gltfTexture.samplerIndex && *gltfTexture.samplerIndex < model.asset.samplers.size() )
 		{
-			const tinygltf::Sampler &sampler = model.samplers[ gltfTexture.sampler ];
-			
+			const fastgltf::Sampler &sampler = model.asset.samplers[ *gltfTexture.samplerIndex ];
+
 			// Set sampler properties
-			outTexture->samplerConfig.minFilter = ConvertMinFilter( sampler.minFilter );
-			outTexture->samplerConfig.magFilter = ConvertMagFilter( sampler.magFilter );
-			outTexture->samplerConfig.addressModeU = ConvertWrappingMode( sampler.wrapS );
-			outTexture->samplerConfig.addressModeV = ConvertWrappingMode( sampler.wrapT );
+			outTexture->samplerConfig.minFilter = ConvertMinFilter( static_cast< int >( sampler.minFilter.value_or( fastgltf::Filter::Linear ) ) );
+			outTexture->samplerConfig.magFilter = ConvertMagFilter( static_cast< int >( sampler.magFilter.value_or( fastgltf::Filter::Linear ) ) );
+			outTexture->samplerConfig.addressModeU = ConvertWrappingMode( static_cast< int >( sampler.wrapS ) );
+			outTexture->samplerConfig.addressModeV = ConvertWrappingMode( static_cast< int >( sampler.wrapT ) );
 			outTexture->samplerConfig.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT; // Default for 2D textures
 
 			// Handle mipmapping
-			if ( sampler.minFilter == TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST || sampler.minFilter == TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR || sampler.minFilter == TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST ||
-				 sampler.minFilter == TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR )
+			if ( sampler.minFilter == fastgltf::Filter::NearestMipMapNearest || sampler.minFilter == fastgltf::Filter::NearestMipMapLinear || sampler.minFilter == fastgltf::Filter::LinearMipMapNearest ||
+				 sampler.minFilter == fastgltf::Filter::LinearMipMapLinear )
 			{
 				// Calculate max mip levels based on texture dimensions
 				outTexture->samplerConfig.mipLevels = static_cast< uint32_t >( std::floor( std::log2( std::max( image.width, image.height ) ) ) ) + 1;
@@ -658,19 +607,20 @@ namespace xrlib
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
 
 			// Create image view
-			vkutils::CreateImageView( outTexture->view, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, outTexture->format, VK_IMAGE_ASPECT_COLOR_BIT );
+			VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->view, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, outTexture->format, VK_IMAGE_ASPECT_COLOR_BIT ) );
 
 			// Upload image to gpu buffer and transition image for shader reads
-			vkutils::UploadTextureDataToImage(
-				m_pSession->GetVulkan()->GetVkLogicalDevice(),
-				m_pSession->GetVulkan()->GetVkPhysicalDevice(),
-				commandPool,
-				m_pSession->GetVulkan()->GetVkQueue_Graphics(),
-				outTexture->image,
-				outTexture->data,
-				outTexture->width,
-				outTexture->height,
-				outTexture->format );
+			if ( !m_options.batchTextureUploads )
+				vkutils::UploadTextureDataToImage(
+					m_pSession->GetVulkan()->GetVkLogicalDevice(),
+					m_pSession->GetVulkan()->GetVkPhysicalDevice(),
+					commandPool,
+					m_pSession->GetVulkan()->GetVkQueue_Graphics(),
+					outTexture->image,
+					outTexture->data,
+					outTexture->width,
+					outTexture->height,
+					outTexture->format );
 
 			// Create texture sampler
 			VkSamplerCreateInfo samplerInfo {};
@@ -698,19 +648,25 @@ namespace xrlib
 			samplerInfo.minLod = outTexture->samplerConfig.minLod;
 			samplerInfo.maxLod = outTexture->samplerConfig.maxLod;
 
-			vkCreateSampler( m_pSession->GetVulkan()->GetVkLogicalDevice(), &samplerInfo, nullptr, &outTexture->sampler );
+			VK_CHECK_RESULT( vkCreateSampler( m_pSession->GetVulkan()->GetVkLogicalDevice(), &samplerInfo, nullptr, &outTexture->sampler ) );
 		}
 	}
 
-	void CGltf::IdentifyTextureTypes( std::vector< STexture > &textures, const tinygltf::Model &model )
+	template< typename T >
+	static int TextureIndex( const T &texture )
+	{
+		return texture ? static_cast< int >( texture->textureIndex ) : -1;
+	}
+
+	void CGltf::IdentifyTextureTypes( std::vector< STexture > &textures, const fastgltf::Asset &model )
 	{
 		// Go through each material to identify texture types
 		for ( const auto &material : model.materials )
 		{
 			// Base color texture
-			if ( material.pbrMetallicRoughness.baseColorTexture.index >= 0 )
+			if ( TextureIndex( material.pbrData.baseColorTexture ) >= 0 )
 			{
-				int texIndex = model.textures[ material.pbrMetallicRoughness.baseColorTexture.index ].source;
+				int texIndex = static_cast< int >( model.textures[ TextureIndex( material.pbrData.baseColorTexture ) ].imageIndex.value_or( model.images.size() ) );
 				if ( texIndex >= 0 && texIndex < textures.size() )
 				{
 					textures[ texIndex ].type = ETextureType::BaseColor;
@@ -718,9 +674,9 @@ namespace xrlib
 			}
 
 			// Metallic roughness texture
-			if ( material.pbrMetallicRoughness.metallicRoughnessTexture.index >= 0 )
+			if ( TextureIndex( material.pbrData.metallicRoughnessTexture ) >= 0 )
 			{
-				int texIndex = model.textures[ material.pbrMetallicRoughness.metallicRoughnessTexture.index ].source;
+				int texIndex = static_cast< int >( model.textures[ TextureIndex( material.pbrData.metallicRoughnessTexture ) ].imageIndex.value_or( model.images.size() ) );
 				if ( texIndex >= 0 && texIndex < textures.size() )
 				{
 					textures[ texIndex ].type = ETextureType::MetallicRoughness;
@@ -728,9 +684,9 @@ namespace xrlib
 			}
 
 			// Normal map
-			if ( material.normalTexture.index >= 0 )
+			if ( TextureIndex( material.normalTexture ) >= 0 )
 			{
-				int texIndex = model.textures[ material.normalTexture.index ].source;
+				int texIndex = static_cast< int >( model.textures[ TextureIndex( material.normalTexture ) ].imageIndex.value_or( model.images.size() ) );
 				if ( texIndex >= 0 && texIndex < textures.size() )
 				{
 					textures[ texIndex ].type = ETextureType::Normal;
@@ -738,9 +694,9 @@ namespace xrlib
 			}
 
 			// Emissive map
-			if ( material.emissiveTexture.index >= 0 )
+			if ( TextureIndex( material.emissiveTexture ) >= 0 )
 			{
-				int texIndex = model.textures[ material.emissiveTexture.index ].source;
+				int texIndex = static_cast< int >( model.textures[ TextureIndex( material.emissiveTexture ) ].imageIndex.value_or( model.images.size() ) );
 				if ( texIndex >= 0 && texIndex < textures.size() )
 				{
 					textures[ texIndex ].type = ETextureType::Emissive;
@@ -748,9 +704,9 @@ namespace xrlib
 			}
 
 			// Occlusion map
-			if ( material.occlusionTexture.index >= 0 )
+			if ( TextureIndex( material.occlusionTexture ) >= 0 )
 			{
-				int texIndex = model.textures[ material.occlusionTexture.index ].source;
+				int texIndex = static_cast< int >( model.textures[ TextureIndex( material.occlusionTexture ) ].imageIndex.value_or( model.images.size() ) );
 				if ( texIndex >= 0 && texIndex < textures.size() )
 				{
 					textures[ texIndex ].type = ETextureType::Occlusion;
@@ -759,7 +715,7 @@ namespace xrlib
 		}
 	}
 
-	void CGltf::ParseMaterials( CRenderModel *outRenderModel, const tinygltf::Model &model ) 
+	void CGltf::ParseMaterials( CRenderModel *outRenderModel, const fastgltf::Asset &model )
 	{
 		if ( model.materials.size() < 1 )
 			return;
@@ -776,23 +732,23 @@ namespace xrlib
 		}
 	}
 
-	void CGltf::ParseMaterial( SMaterial *outMaterial, const tinygltf::Model &model, const tinygltf::Material &gltfMaterial ) 
+	void CGltf::ParseMaterial( SMaterial *outMaterial, const fastgltf::Asset &model, const fastgltf::Material &gltfMaterial )
 	{
 		// Parse PBR Metallic Roughness properties
-		if ( gltfMaterial.pbrMetallicRoughness.baseColorFactor.size() == 4 )
+		if ( gltfMaterial.pbrData.baseColorFactor.size() == 4 )
 		{
 			for ( int i = 0; i < 4; i++ )
 			{
-				outMaterial->baseColorFactor[ i ] = static_cast< float >( gltfMaterial.pbrMetallicRoughness.baseColorFactor[ i ] );
+				outMaterial->baseColorFactor[ i ] = static_cast< float >( gltfMaterial.pbrData.baseColorFactor[ i ] );
 			}
 		}
 
 		// Parse texture indices
-		outMaterial->baseColorTexture = gltfMaterial.pbrMetallicRoughness.baseColorTexture.index;
-		outMaterial->metallicRoughnessTexture = gltfMaterial.pbrMetallicRoughness.metallicRoughnessTexture.index;
-		outMaterial->normalTexture = gltfMaterial.normalTexture.index;
-		outMaterial->occlusionTexture = gltfMaterial.occlusionTexture.index;
-		outMaterial->emissiveTexture = gltfMaterial.emissiveTexture.index;
+		outMaterial->baseColorTexture = TextureIndex( gltfMaterial.pbrData.baseColorTexture );
+		outMaterial->metallicRoughnessTexture = TextureIndex( gltfMaterial.pbrData.metallicRoughnessTexture );
+		outMaterial->normalTexture = TextureIndex( gltfMaterial.normalTexture );
+		outMaterial->occlusionTexture = TextureIndex( gltfMaterial.occlusionTexture );
+		outMaterial->emissiveTexture = TextureIndex( gltfMaterial.emissiveTexture );
 
 		// Parse emissive factor
 		if ( gltfMaterial.emissiveFactor.size() == 3 )
@@ -804,11 +760,11 @@ namespace xrlib
 		}
 
 		// Parse alpha mode
-		if ( gltfMaterial.alphaMode == "MASK" )
+		if ( gltfMaterial.alphaMode == fastgltf::AlphaMode::Mask )
 		{
 			outMaterial->setAlphaMode( EAlphaMode::Mask );
 		}
-		else if ( gltfMaterial.alphaMode == "BLEND" )
+		else if ( gltfMaterial.alphaMode == fastgltf::AlphaMode::Blend )
 		{
 			outMaterial->setAlphaMode( EAlphaMode::Blend );
 		}
@@ -824,7 +780,7 @@ namespace xrlib
 		outMaterial->doubleSided = gltfMaterial.doubleSided;
 	}
 
-	void CGltf::ParseSkins( CRenderModel *outRenderModel, const tinygltf::Model &model ) 
+	void CGltf::ParseSkins( CRenderModel *outRenderModel, const fastgltf::Asset &model )
 	{
 		if ( model.skins.size() < 1 )
 			return;
@@ -844,10 +800,10 @@ namespace xrlib
 			
 	}
 
-	void CGltf::ParseSkin( SSkin *outSkin, const tinygltf::Model &model, const tinygltf::Skin &gltfSkin ) 
+	void CGltf::ParseSkin( SSkin *outSkin, const fastgltf::Asset &model, const fastgltf::Skin &gltfSkin )
 	{
 		outSkin->name = gltfSkin.name;
-		outSkin->skeleton = gltfSkin.skeleton;
+		outSkin->skeleton = gltfSkin.skeleton ? static_cast< int >( *gltfSkin.skeleton ) : -1;
 
 		// Parse joints with validation
 		outSkin->joints.reserve( gltfSkin.joints.size() );
@@ -879,7 +835,7 @@ namespace xrlib
 		for ( size_t i = 0; i < gltfSkin.joints.size(); ++i )
 		{
 			uint32_t jointNodeIndex = gltfSkin.joints[ i ];
-			const tinygltf::Node &node = model.nodes[ jointNodeIndex ];
+			const fastgltf::Node &node = model.nodes[ jointNodeIndex ];
 
 			// Process each child of this node
 			for ( int childNodeIndex : node.children )
@@ -895,12 +851,9 @@ namespace xrlib
 		}
 
 		// Parse inverse bind matrices if available
-		if ( gltfSkin.inverseBindMatrices >= 0 )
+		if ( gltfSkin.inverseBindMatrices.has_value() )
 		{
-			const tinygltf::Accessor &accessor = model.accessors[ gltfSkin.inverseBindMatrices ];
-			const tinygltf::BufferView &bufferView = model.bufferViews[ accessor.bufferView ];
-			const tinygltf::Buffer &buffer = model.buffers[ bufferView.buffer ];
-			const float *matrices = reinterpret_cast< const float * >( &buffer.data[ bufferView.byteOffset + accessor.byteOffset ] );
+			const fastgltf::Accessor &accessor = model.accessors[ *gltfSkin.inverseBindMatrices ];
 
 			size_t numMatrices = accessor.count;
 			outSkin->inverseBindMatrices.resize( numMatrices );
@@ -920,7 +873,8 @@ namespace xrlib
 
 				// Get the inverse bind matrix for this joint
 				float mat[ 16 ];
-				memcpy( &mat, matrices + ( i * 16 ), sizeof( mat ) );
+				const auto matrix = fastgltf::getAccessorElement< fastgltf::math::fmat4x4 >( model, accessor, i );
+				memcpy( mat, matrix.data(), sizeof( mat ) );
 
 				// Manually transpose the matrix (glTF is column-major, we need row-major)
 				XrMatrix4x4f transposed;
@@ -949,7 +903,7 @@ namespace xrlib
 					-0.7071067811865476f, // sin(90/2) for X rotation
 					0.0f,
 					0.0f,
-					0.7071067811865476f // cos(90/2)
+					0.7071067811865476f	 // cos(90/2)
 				};
 				XrQuaternionf yRotation {
 					0.0f,
@@ -987,9 +941,9 @@ namespace xrlib
 	{
 		switch ( gltfFilter )
 		{
-			case TINYGLTF_TEXTURE_FILTER_NEAREST:
+			case static_cast< int >( fastgltf::Filter::Nearest ):
 				return VK_FILTER_NEAREST;
-			case TINYGLTF_TEXTURE_FILTER_LINEAR:
+			case static_cast< int >( fastgltf::Filter::Linear ):
 				return VK_FILTER_LINEAR;
 			default:
 				return VK_FILTER_LINEAR; // Default to linear filtering
@@ -1000,14 +954,14 @@ namespace xrlib
 	{
 		switch ( gltfFilter )
 		{
-			case TINYGLTF_TEXTURE_FILTER_NEAREST:
-			case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
-			case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
+			case static_cast< int >( fastgltf::Filter::Nearest ):
+			case static_cast< int >( fastgltf::Filter::NearestMipMapNearest ):
+			case static_cast< int >( fastgltf::Filter::NearestMipMapLinear ):
 				return VK_FILTER_NEAREST;
 
-			case TINYGLTF_TEXTURE_FILTER_LINEAR:
-			case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
-			case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
+			case static_cast< int >( fastgltf::Filter::Linear ):
+			case static_cast< int >( fastgltf::Filter::LinearMipMapNearest ):
+			case static_cast< int >( fastgltf::Filter::LinearMipMapLinear ):
 				return VK_FILTER_LINEAR;
 
 			default:
@@ -1019,13 +973,13 @@ namespace xrlib
 	{
 		switch ( gltfWrap )
 		{
-			case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:
+			case static_cast< int >( fastgltf::Wrap::ClampToEdge ):
 				return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 
-			case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT:
+			case static_cast< int >( fastgltf::Wrap::MirroredRepeat ):
 				return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
 
-			case TINYGLTF_TEXTURE_WRAP_REPEAT:
+			case static_cast< int >( fastgltf::Wrap::Repeat ):
 				return VK_SAMPLER_ADDRESS_MODE_REPEAT;
 
 			default:

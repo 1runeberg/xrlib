@@ -35,11 +35,14 @@ Each demo provides clear, practical implementation examples designed to highligh
 ### Third-party dependencies
 
 - [OpenXR SDK](https://github.com/KhronosGroup/OpenXR-SDK) - OpenXR headers and runtime loader for xrlib.
-- [TinyGLTF](https://github.com/syoyo/tinygltf) - glTF model loading for xrvk.
-- [nlohmann/json](https://github.com/nlohmann/json) - glTF JSON parsing for xrvk.
+- [fastgltf](https://github.com/spnda/fastgltf) - glTF model loading for xrvk.
+- [simdjson](https://github.com/simdjson/simdjson) - glTF JSON parsing for xrvk.
 - [stb](https://github.com/nothings/stb) - Texture image loading for xrvk.
 
 ### Building the Library
+
+CMake consumers linking the `xrlib` target receive its dependencies automatically.
+When linking the static renderer library directly, also link `fastgltf` and `simdjson`.
 
 1. Clone the Repository
     ```bash

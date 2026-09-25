@@ -109,6 +109,11 @@ jobs:
                 cp ./${{ github.ref_name }}_xrlib_source/LICENSE ./${{ github.ref_name }}_xrlib_include/include
                 cp -r ./${{ github.ref_name }}_xrlib_source/third_party/openxr/include/openxr ./${{ github.ref_name }}_xrlib_include
                 cp ./${{ github.ref_name }}_xrlib_source/third_party/openxr/LICENSE ./${{ github.ref_name }}_xrlib_include/openxr
+                cp -r ./${{ github.ref_name }}_xrlib_source/third_party/fastgltf/include/fastgltf ./${{ github.ref_name }}_xrlib_include
+                cp ./${{ github.ref_name }}_xrlib_source/third_party/fastgltf/LICENSE.md ./${{ github.ref_name }}_xrlib_include/fastgltf
+                mkdir -p ./${{ github.ref_name }}_xrlib_include/licenses/simdjson
+                cp ./${{ github.ref_name }}_xrlib_source/third_party/simdjson/LICENSE* ./${{ github.ref_name }}_xrlib_include/licenses/simdjson
+                cp ./${{ github.ref_name }}_xrlib_source/third_party/stb/LICENSE ./${{ github.ref_name }}_xrlib_include/licenses/stb-LICENSE
 
             - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:

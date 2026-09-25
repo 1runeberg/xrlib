@@ -8,6 +8,3 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    ignore:
-      # TinyGLTF v3 requires an API migration; update the v2 pin manually.
-      - dependency-name: "*tinygltf*"

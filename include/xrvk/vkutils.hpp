@@ -14,6 +14,7 @@
 #pragma once
 
 #include <xrlib/vulkan.hpp>
+#include <span>
 
 namespace vkutils
 {
@@ -42,6 +43,22 @@ namespace vkutils
 	VkResult CreateSampler( VkSampler &outSampler, VkDevice device, VkFilter magFilter, VkFilter minFilter, VkSamplerMipmapMode mipmapMode, VkSamplerAddressMode addressMode );
 
 	void UploadTextureDataToImage( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue graphicsQueue, VkImage image, const std::vector< uint8_t > &imageData, uint32_t width, uint32_t height, VkFormat format );
+
+	/// <summary>Borrowed pixels for a newly created, single-mip uncompressed color image.</summary>
+	struct SImageUpload
+	{
+		VkImage image;
+		std::span< const uint8_t > data;
+		uint32_t width;
+		uint32_t height;
+		VkFormat format;
+	};
+
+	/// <summary>Uploads 8/16-bit UNORM images with one staging allocation, submission and fence wait</summary>
+	/// <param name="images">Images in UNDEFINED layout; pixels must remain valid until this call returns</param>
+	/// <returns>Vulkan result. Success leaves mip 0 ready for fragment shader reads.</returns>
+	/// <remarks>The caller must serialize access to the command pool and graphics queue.</remarks>
+	VkResult UploadTextureDataToImages( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue graphicsQueue, std::span< const SImageUpload > images );
 
 	void TransitionImageLayout(
 		VkDevice device,
