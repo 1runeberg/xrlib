@@ -36,7 +36,7 @@ namespace vkutils
 		VkFormat format, 
 		VkImageTiling tiling, 
 		VkImageUsageFlags usage, 
-		VkMemoryPropertyFlags properties );
+		VkMemoryPropertyFlags properties, VkImageCreateFlags flags = 0 );
 
 	VkResult CreateImageView( VkImageView &outImageView, VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspectFlags );
 

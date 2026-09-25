@@ -35,6 +35,10 @@ namespace xrlib
 	static constexpr uint32_t TEXTURE_EMISSIVE_BIT = 0x08u;
 	static constexpr uint32_t TEXTURE_OCCLUSION_BIT = 0x10u;
 
+	static constexpr uint32_t TEXTURE_UV1_SHIFT = 8u;   // Bits 8-12 select TEXCOORD_1 for each texture slot
+	static constexpr uint32_t TEXTURE_BASE_COLOR_SRGB_BIT = 1u << 16;
+	static constexpr uint32_t TEXTURE_EMISSIVE_SRGB_BIT = 1u << 17;
+
 	// Alpha modes packed into texture flags (using bits 24-25)
 	static constexpr uint32_t ALPHA_MODE_SHIFT = 24u;
 	static constexpr uint32_t ALPHA_MODE_MASK = 0x03u << ALPHA_MODE_SHIFT;
@@ -67,6 +71,7 @@ namespace xrlib
 		float alphaCutoff = 0.5f;
 		float normalScale = 1.0f;
 		uint32_t textureFlags = 0; // Includes alpha mode in bits 24-25
+		float occlusionStrength = 1.0f;
 		float padding[ 2 ] = { 0.0f, 0.0f };
 
 	    void setTextureFlag( uint32_t flag, bool present ) 
@@ -86,7 +91,9 @@ namespace xrlib
 		EAlphaMode getAlphaMode() const { return static_cast< EAlphaMode >( ( textureFlags & ALPHA_MODE_MASK ) >> ALPHA_MODE_SHIFT ); }
 	};
 
-	static_assert( sizeof( SMaterialUBO ) % 16 == 0, "SMaterialInfo size must be aligned to 16 bytes" );
+	static_assert( sizeof( SMaterialUBO ) == 64 );
+	static_assert( offsetof( SMaterialUBO, textureFlags ) == 48 );
+	static_assert( offsetof( SMaterialUBO, occlusionStrength ) == 52 );
 
 	struct SMaterial : public SMaterialUBO
 	{

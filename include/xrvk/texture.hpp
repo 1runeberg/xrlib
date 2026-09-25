@@ -67,6 +67,7 @@ namespace xrlib
 		VkImage image = VK_NULL_HANDLE;
 		VkDeviceMemory memory = VK_NULL_HANDLE;
 		VkImageView view = VK_NULL_HANDLE;
+		VkImageView srgbView = VK_NULL_HANDLE; // Optional color view sharing the same image allocation
 		VkSampler sampler = VK_NULL_HANDLE;
 	};
 
@@ -80,6 +81,8 @@ namespace xrlib
 
 		// Create a default 1x1 white texture
 		VkResult CreateDefaultTexture( STexture &outTexture );
+		/// <summary>Returns a shared white texture owned by this manager</summary>
+		const STexture &GetDefaultTexture();
 
 		// Create a texture from raw data
 		VkResult CreateTextureFromData( STexture &outTexture, VkFormat format, void *data, uint32_t width, uint32_t height );
@@ -91,6 +94,7 @@ namespace xrlib
 		CSession *m_pSession;
 		VkCommandPool m_pool = VK_NULL_HANDLE; 
 		VkSampler m_defaultSampler = VK_NULL_HANDLE;
+		STexture m_defaultTexture;
 
 		VkDevice GetDevice() { return m_pSession->GetVulkan()->GetVkLogicalDevice(); }
 		VkPhysicalDevice GetPhysicalDevice() { return m_pSession->GetVulkan()->GetVkPhysicalDevice(); }

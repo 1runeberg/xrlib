@@ -92,10 +92,11 @@ namespace vkutils
 		VkFormat format, 
 		VkImageTiling tiling, 
 		VkImageUsageFlags usage, 
-		VkMemoryPropertyFlags properties )
+		VkMemoryPropertyFlags properties, VkImageCreateFlags flags )
 	{
 		VkImageCreateInfo imageInfo {};
 		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		imageInfo.flags = flags;
 		imageInfo.imageType = VK_IMAGE_TYPE_2D;
 		imageInfo.extent.width = width;
 		imageInfo.extent.height = height;

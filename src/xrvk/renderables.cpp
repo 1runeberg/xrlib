@@ -221,7 +221,12 @@ namespace xrlib
 			pSceneLighting = static_cast< SSceneLighting * >( pSceneLightingBuffer->GetMappedData() );
 		}
 
-		// Set default lighting - no pbr
+		// Initialize the complete GPU block, including padding and unused lights.
+		if ( !pSceneLighting )
+			throw std::runtime_error( "Failed to map scene lighting buffer" );
+		new ( pSceneLighting ) SSceneLighting {};
+
+		// Set default lighting
 		pSceneLighting->mainLight.direction = { 0.0f, -1.0f, 0.0f };
 		pSceneLighting->mainLight.intensity = 0.5f;
 		pSceneLighting->mainLight.color = { 1.0f, 0.98f, 0.95f };
