@@ -25,8 +25,8 @@ project("${XRLIB}" VERSION 0.5.1.0)
 set(XRLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(XRLIB_SRC "${XRLIB_ROOT}/src")
 set(XRLIB_INCLUDE "${XRLIB_ROOT}/include")
-set(XRLIB_BIN_OUT "${XRLIB_ROOT}/bin")
-set(XRLIB_LIB_OUT "${XRLIB_ROOT}/lib")
+set(XRLIB_BIN_OUT "${XRLIB_ROOT}/bin" CACHE PATH "Binary output directory")
+set(XRLIB_LIB_OUT "${XRLIB_ROOT}/lib" CACHE PATH "Library output directory")
 set(THIRD_PARTY "${XRLIB_ROOT}/third_party")
 set(XRLIB_EXT_INCLUDE "${XRLIB_INCLUDE}/${XRLIB}/ext")
 set(XRLIB_EXT_SRC "${XRLIB_SRC}/${XRLIB}/ext")
@@ -224,8 +224,11 @@ endif()
 # Keep JsonCpp embedded when incorporating the OpenXR loader objects (Monado).
 set(BUILD_WITH_SYSTEM_JSONCPP OFF CACHE BOOL "Use bundled JsonCpp for the OpenXR loader" FORCE)
 
-# Add openxr
-add_subdirectory(${OPENXR_ROOT})
+# Embedded platforms may provide OpenXR directly. Never link two xr* providers
+set(XRLIB_OPENXR_LIBRARY "" CACHE FILEPATH "External OpenXR runtime/loader binary; empty builds the bundled loader")
+if(NOT XRLIB_OPENXR_LIBRARY)
+    add_subdirectory(${OPENXR_ROOT})
+endif()
 
 # Add TinyGLTF
 set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "" FORCE)
@@ -265,8 +268,12 @@ set (ALLSOURCE
       ${XRLIB_CI}
       ${XRLIB_HEADERS} 
       ${XRLIB_SOURCE} 
-      $<TARGET_OBJECTS:openxr_loader>    
+
     )
+
+if(NOT XRLIB_OPENXR_LIBRARY)
+    list(APPEND ALLSOURCE $<TARGET_OBJECTS:openxr_loader>)
+endif()
 
 if(ENABLE_XRVK)
     list(APPEND ALLSOURCE 
@@ -300,6 +307,10 @@ if(NOT BUILD_AS_STATIC)
         # cmake 3.22 builds multiple copies with version and so version for desktops. commenting for now to avoid CI build duplicates.
         # set_target_properties(${XRLIB} PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR})
     endif()
+endif()
+
+if(XRLIB_OPENXR_LIBRARY)
+    target_link_libraries(${XRLIB} PUBLIC "${XRLIB_OPENXR_LIBRARY}")
 endif()
 
 # Set project public include headers
