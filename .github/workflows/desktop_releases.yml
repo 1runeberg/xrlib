@@ -115,7 +115,7 @@ jobs:
                 name: xrlib-${{ github.ref_name }}-INCLUDE
                 path: ./${{ github.ref_name }}_xrlib_include
 
-            - uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
+            - uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
               with:
                 name: xrlib-source
                 failOnError: false
@@ -162,7 +162,7 @@ jobs:
                 name: xrlib_${{ github.ref_name }}-windows-static-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_windows-static
 
-            - uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
+            - uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
               with:
                 name: xrlib-windows-latest_*
                 failOnError: false
@@ -240,7 +240,7 @@ jobs:
                 name: xrlib_${{ github.ref_name }}-ubuntu-static-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_ubuntu-static
 
-            - uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
+            - uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
               with:
                 name: xrlib-ubuntu-latest_*
                 failOnError: false
