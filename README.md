@@ -1,5 +1,5 @@
 # xrlib
-[![android-latest](https://github.com/1runeberg/xrlib/actions/workflows/android_builds.yml/badge.svg)](https://github.com/1runeberg/xrlib/actions/workflows/android_builds.yml)&nbsp;&nbsp;[![ubuntu-latest](https://github.com/1runeberg/xrlib/actions/workflows/ubuntu_builds.yml/badge.svg)](https://github.com/1runeberg/xrlib/actions/workflows/ubuntu_builds.yml)&nbsp;&nbsp;[![windows-latest](https://github.com/1runeberg/xrlib/actions/workflows/windows_builds.yml/badge.svg)](https://github.com/1runeberg/xrlib/actions/workflows/windows_builds.yml)
+[![android-latest](https://github.com/1runeberg/xrlib/actions/workflows/android_builds.yml/badge.svg)](https://github.com/1runeberg/xrlib/actions/workflows/android_builds.yml)&nbsp;&nbsp;[![ubuntu-latest](https://github.com/1runeberg/xrlib/actions/workflows/ubuntu_builds.yml/badge.svg)](https://github.com/1runeberg/xrlib/actions/workflows/ubuntu_builds.yml)&nbsp;&nbsp;[![windows-latest](https://github.com/1runeberg/xrlib/actions/workflows/windows_builds.yml/badge.svg)](https://github.com/1runeberg/xrlib/actions/workflows/windows_builds.yml)&nbsp;&nbsp;[![steamos-arm64](https://github.com/1runeberg/xrlib/actions/workflows/steamos_builds.yml/badge.svg)](https://github.com/1runeberg/xrlib/actions/workflows/steamos_builds.yml)
 
 A modern OpenXR wrapper library written in C++20 that streamlines XR development while maintaining OpenXR's full capabilities. Built with native Vulkan support, it abstracts complex API interactions without sacrificing performance or flexibility. 
 
@@ -97,6 +97,23 @@ The following CMake options are available:
     make
     ```
 
+#### SteamOS ARM64
+Additional requirements:
+    - Requires Docker with Linux ARM64 support 
+    - On x86-64 Linux hosts, configure ARM64 QEMU/binfmt support first
+
+    ```bash
+    # Build from the repo root with Valve's Sniper SDK and Clang
+    # Libraries are exported to build/steamos-arm64/lib
+    docker build --platform linux/arm64 --target libraries \
+        --build-arg BUILD_TYPE=Release \
+        --build-arg CPP_COMPILER=clang++ \
+        --build-arg BUILD_AS_STATIC=OFF \
+        --build-arg ENABLE_XRVK=ON \
+        --output type=local,dest=build/steamos-arm64/lib \
+        -f platforms/steamos/Dockerfile .
+    ```
+
 #### Android
 Additional requirements:
     - Android NDK
@@ -174,20 +191,3 @@ When developing with the library:
     - Source files are in `src` directory
     - Shader sources are in `res/shaders/src`
     - Build artifacts are placed in `bin` and `lib` directories
-
-## Embedded OpenXR runtimes and visionOS
-
-An experimental visionOS 27 build is exercised by the independent xrlib+xrvk sample
-in [xrlib-demos/visionos-xr](https://github.com/1runeberg/xrlib-demos/tree/main/visionos-xr).
-See its README for build and validation instructions.
-The runtime remains a separate binary; xrlib does not include its implementation.
-
-Applications enabling `XR_KHR_vulkan_enable2` now use the standard enable2 requirements,
-instance/device creation and GPU-selection functions. The legacy route remains available
-when the application enables `XR_KHR_vulkan_enable`. Use LOCAL space on platforms that
-do not advertise STAGE, and select formats from the runtime's advertised list.
-
-For app-embedded providers, set CMake `XRLIB_OPENXR_LIBRARY` to the provider binary.
-This replaces the bundled OpenXR loader, preventing duplicate `xr*` providers. Optional
-`XRLIB_LIB_OUT` and `XRLIB_BIN_OUT` keep cross-platform build artifacts separate.
-The ordinary build continues to use the bundled loader when no external provider is set.

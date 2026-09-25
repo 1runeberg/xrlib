@@ -1,0 +1,23 @@
+# xrlib
+
+name: steamos-arm64
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['main']
+
+
+jobs:
+    build:
+        uses: ./.github/workflows/_src_steamos_builds.yml
+        with:
+          matrix-json: >
+            {
+              "build_type": ["Debug", "Release"],
+              "enable_xrvk": ["ON", "OFF"],
+              "cpp_compiler": ["g++", "clang++"]
+            }
+          build-as-static : "OFF"
+          export-artifacts: "OFF"
