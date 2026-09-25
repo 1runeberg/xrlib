@@ -53,6 +53,7 @@ namespace xrlib
 		std::string uri;								// URI/path to the image file
 		ETextureType type = ETextureType::Unknown;
 		
+		std::vector< vkutils::SImageMip > mips;			// Prepared mip ranges in data
 		std::vector< uint8_t > data;					// Raw image data
 		int32_t width = 1;
 		int32_t height = 1;
@@ -81,6 +82,7 @@ namespace xrlib
 
 		// Create a default 1x1 white texture
 		VkResult CreateDefaultTexture( STexture &outTexture );
+
 		/// <summary>Returns a shared white texture owned by this manager</summary>
 		const STexture &GetDefaultTexture();
 

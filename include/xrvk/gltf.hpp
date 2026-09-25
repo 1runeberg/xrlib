@@ -90,6 +90,7 @@ namespace xrlib
 		int component = 4;
 		int bits = 8;
 		std::vector< uint8_t > image;
+		std::vector< vkutils::SImageMip > mips; // Prepared mip ranges; empty for PNG/JPEG
 	};
 
 	/// <summary>CPU wall-clock durations in milliseconds for completed loading stages</summary>
@@ -97,7 +98,7 @@ namespace xrlib
 	{
 		double diskReadMs = 0;		 // Main glTF/GLB file read; filesystem cache may satisfy the read
 		double parseMs = 0;			 // glTF parsing, validation and external buffer reads
-		double imageDecodeMs = 0;	 // Image decoding, including external image reads
+		double imageDecodeMs = 0;	 // Image decoding or prepared KTX2 reads and validation, including external image reads
 		double textureUploadMs = 0;	 // Texture creation and upload calls, including their waits
 		double meshConversionMs = 0; // Materials, skins and mesh conversion on the CPU
 	};
@@ -113,8 +114,9 @@ namespace xrlib
 	/// <summary>Loading execution options; decoded pixels and texture settings are unchanged</summary>
 	struct SGltfLoadOptions
 	{
-		uint32_t imageDecodeWorkers = 4; // Maximum concurrent image decoders; 1 selects serial decoding
+		uint32_t imageDecodeWorkers = 4; // Maximum concurrent image readers/decoders; 1 selects serial decoding
 		bool batchTextureUploads = true; // Submit texture transfers together instead of one image at a time
+		std::string textureDirectory;	 // Prepared KTX2 directory for this asset (filesystem or Android assets); requires one image-N.ktx2 per glTF image
 	};
 
 	class CGltf

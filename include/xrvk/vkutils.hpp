@@ -36,15 +36,22 @@ namespace vkutils
 		VkFormat format, 
 		VkImageTiling tiling, 
 		VkImageUsageFlags usage, 
-		VkMemoryPropertyFlags properties, VkImageCreateFlags flags = 0 );
+		VkMemoryPropertyFlags properties, VkImageCreateFlags flags = 0, uint32_t mipLevels = 1 );
 
-	VkResult CreateImageView( VkImageView &outImageView, VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspectFlags );
+	VkResult CreateImageView( VkImageView &outImageView, VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels = 1 );
 
 	VkResult CreateSampler( VkSampler &outSampler, VkDevice device, VkFilter magFilter, VkFilter minFilter, VkSamplerMipmapMode mipmapMode, VkSamplerAddressMode addressMode );
 
 	void UploadTextureDataToImage( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue graphicsQueue, VkImage image, const std::vector< uint8_t > &imageData, uint32_t width, uint32_t height, VkFormat format );
 
-	/// <summary>Borrowed pixels for a newly created, single-mip uncompressed color image.</summary>
+	/// <summary>Byte range for one precomputed mip level in an image's pixel data</summary>
+	struct SImageMip
+	{
+		VkDeviceSize offset;
+		VkDeviceSize size;
+	};
+
+	/// <summary>Borrowed pixels and optional mip ranges for a newly created image</summary>
 	struct SImageUpload
 	{
 		VkImage image;
@@ -52,11 +59,12 @@ namespace vkutils
 		uint32_t width;
 		uint32_t height;
 		VkFormat format;
+		std::span< const SImageMip > mips {}; // Empty for a single-level image
 	};
 
 	/// <summary>Uploads 8/16-bit UNORM images with one staging allocation, submission and fence wait</summary>
 	/// <param name="images">Images in UNDEFINED layout; pixels must remain valid until this call returns</param>
-	/// <returns>Vulkan result. Success leaves mip 0 ready for fragment shader reads.</returns>
+	/// <returns>Vulkan result. Success leaves all supplied mip levels ready for fragment shader reads</returns>
 	/// <remarks>The caller must serialize access to the command pool and graphics queue.</remarks>
 	VkResult UploadTextureDataToImages( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue graphicsQueue, std::span< const SImageUpload > images );
 

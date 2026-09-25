@@ -82,7 +82,87 @@ namespace xrlib
 		return true;
 	}
 
-	static bool LoadImages( SGltfModel &outModel, const fs::path &sDirectory, uint32_t unMaxWorkers )
+	// Prepared textures use a restricted KTX2 profile: uncompressed 2D RGBA8/16
+	// Reject other profiles rather than interpreting compressed bytes as pixels
+	static bool DecodeKtx2( SGltfImage &outImage, std::span< const std::byte > bytes )
+	{
+		constexpr uint8_t identifier[] = { 0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a };
+		if ( bytes.size() < 104 || std::memcmp( bytes.data(), identifier, sizeof( identifier ) ) )
+			return false;
+		auto Read = [ & ]( size_t offset, size_t count = 4 )
+		{
+			uint64_t value = 0;
+			for ( size_t i = 0; i < count; ++i )
+				value |= uint64_t( std::to_integer< uint8_t >( bytes[ offset + i ] ) ) << ( i * 8 );
+			return value;
+		};
+		auto InBounds = [ & ]( uint64_t offset, uint64_t size ) { return offset <= bytes.size() && size <= bytes.size() - offset; };
+		const auto format = Read( 12 ), width = Read( 20 ), height = Read( 24 ), levels = Read( 40 );
+		const bool wide = format == VK_FORMAT_R16G16B16A16_UNORM;
+		if ( ( format != VK_FORMAT_R8G8B8A8_UNORM && format != VK_FORMAT_R8G8B8A8_SRGB && !wide ) || Read( 16 ) != ( wide ? 2 : 1 ) || !width || !height || width > INT_MAX || height > INT_MAX || Read( 28 ) || Read( 32 ) || Read( 36 ) != 1 ||
+			 Read( 44 ) || !levels || levels > 32 || !InBounds( 80, levels * 24 ) || Read( 64, 8 ) || Read( 72, 8 ) )
+			return false;
+		uint64_t dimension = std::max( width, height ), requiredLevels = 0;
+		while ( dimension )
+		{
+			++requiredLevels;
+			dimension >>= 1;
+		}
+		if ( levels != requiredLevels )
+			return false;
+		const auto dfd = Read( 48 ), dfdSize = Read( 52 ), kvd = Read( 56 ), kvdSize = Read( 60 );
+		if ( dfd < 80 + levels * 24 || dfdSize < 28 || !InBounds( dfd, dfdSize ) || Read( dfd ) != dfdSize || ( kvdSize && !InBounds( kvd, kvdSize ) ) )
+			return false;
+
+		// The build tool emits top-left images; reject a cache with a different orientation
+		for ( uint64_t entry = kvd; entry < kvd + kvdSize; )
+		{
+			if ( kvd + kvdSize - entry < 4 )
+				return false;
+			const auto length = Read( entry );
+			entry += 4;
+			if ( length > kvd + kvdSize - entry )
+				return false;
+			const auto *text = reinterpret_cast< const char * >( bytes.data() + entry );
+			const auto *end = static_cast< const char * >( std::memchr( text, 0, length ) );
+			if ( !end )
+				return false;
+			if ( std::string_view( text, end - text ) == "KTXorientation" && ( length < size_t( end - text ) + 3 || end[ 1 ] != 'r' || end[ 2 ] != 'd' ) )
+				return false;
+			entry += ( length + 3 ) & ~uint64_t( 3 );
+		}
+		uint64_t w = width, h = height;
+		std::vector< std::pair< uint64_t, uint64_t > > ranges;
+		for ( size_t level = 0; level < levels; ++level )
+		{
+			const auto offset = Read( 80 + level * 24, 8 ), size = Read( 88 + level * 24, 8 );
+			if ( w > UINT64_MAX / h / ( wide ? 8 : 4 ) )
+				return false;
+			const uint64_t expected = w * h * ( wide ? 8 : 4 );
+			if ( size != expected || Read( 96 + level * 24, 8 ) != expected || !InBounds( offset, size ) || offset < dfd + dfdSize || ( kvdSize && offset < kvd + kvdSize ) || offset % ( wide ? 8 : 4 ) )
+				return false;
+			for ( const auto &[ start, count ] : ranges )
+				if ( offset < start + count && start < offset + size )
+					return false;
+			ranges.emplace_back( offset, size );
+			outImage.mips.push_back( { outImage.image.size(), size } );
+			const auto *pixels = reinterpret_cast< const uint8_t * >( bytes.data() + offset );
+			outImage.image.insert( outImage.image.end(), pixels, pixels + size );
+			if ( level + 1 < levels && w == 1 && h == 1 )
+				return false;
+			w = std::max( uint64_t( 1 ), w / 2 );
+			h = std::max( uint64_t( 1 ), h / 2 );
+		}
+		if ( w != 1 || h != 1 )
+			return false;
+		outImage.width = static_cast< int >( width );
+		outImage.height = static_cast< int >( height );
+		outImage.bits = wide ? 16 : 8;
+		outImage.component = 4;
+		return true;
+	}
+
+	static bool LoadImages( SGltfModel &outModel, const fs::path &sDirectory, uint32_t unMaxWorkers, const std::string &sTextureDirectory )
 	{
 		outModel.images.resize( outModel.asset.images.size() );
 		auto LoadImage = [ & ]( size_t i )
@@ -90,6 +170,21 @@ namespace xrlib
 			const auto &image = outModel.asset.images[ i ];
 			auto &outImage = outModel.images[ i ];
 			outImage.name = image.name;
+			if ( !sTextureDirectory.empty() )
+			{
+				const auto file = fs::path( sTextureDirectory ) / ( "image-" + std::to_string( i ) + ".ktx2" );
+#ifdef XR_USE_PLATFORM_ANDROID
+				auto data = fastgltf::AndroidGltfDataBuffer::FromAsset( file );
+#else
+				auto data = fastgltf::GltfDataBuffer::FromPath( file );
+#endif
+				if ( data.error() != fastgltf::Error::None || !DecodeKtx2( outImage, static_cast< fastgltf::span< std::byte > >( data.get() ) ) )
+				{
+					LogError( XRLIB_NAME, "Invalid or missing prepared KTX2 image: %s", file.string().c_str() );
+					return false;
+				}
+				return true;
+			}
 			bool bLoaded = std::visit(
 				fastgltf::visitor {
 					[ & ]( const fastgltf::sources::Array &source ) { return DecodeImage( outImage, { source.bytes.data(), source.bytes.size() } ); },
@@ -189,6 +284,7 @@ namespace xrlib
 
 		timings.diskReadMs = ElapsedMilliseconds( started );
 		started = std::chrono::steady_clock::now();
+
 		// Keep each parser local so disk loading can run on worker threads
 		fastgltf::Parser parser;
 		auto asset = parser.loadGltf( data.get(), file.parent_path(), fastgltf::Options::LoadExternalBuffers );
@@ -207,7 +303,7 @@ namespace xrlib
 		}
 		timings.parseMs = ElapsedMilliseconds( started );
 		started = std::chrono::steady_clock::now();
-		if ( !LoadImages( model, file.parent_path(), m_options.imageDecodeWorkers ) )
+		if ( !LoadImages( model, file.parent_path(), m_options.imageDecodeWorkers, m_options.textureDirectory ) )
 			return false;
 		timings.imageDecodeMs = ElapsedMilliseconds( started );
 		model.timings = timings;
@@ -381,7 +477,7 @@ namespace xrlib
 			{
 				const auto &texture = outRenderModel->textures[ i ];
 				if ( texture.image && !texture.data.empty() )
-					uploads.push_back( { texture.image, texture.data, static_cast< uint32_t >( texture.width ), static_cast< uint32_t >( texture.height ), texture.format } );
+					uploads.push_back( { texture.image, texture.data, static_cast< uint32_t >( texture.width ), static_cast< uint32_t >( texture.height ), texture.format, texture.mips } );
 			}
 			VK_CHECK_RESULT( vkutils::UploadTextureDataToImages( m_pSession->GetVulkan()->GetVkLogicalDevice(), m_pSession->GetVulkan()->GetVkPhysicalDevice(), commandPool, m_pSession->GetVulkan()->GetVkQueue_Graphics(), uploads ) );
 		}
@@ -500,6 +596,9 @@ namespace xrlib
 		if ( !image.image.empty() )
 		{
 			outTexture->data = image.image;
+			outTexture->mips = image.mips;
+			outTexture->samplerConfig.mipLevels = image.mips.empty() ? 1 : static_cast< uint32_t >( image.mips.size() );
+			outTexture->samplerConfig.maxLod = static_cast< float >( outTexture->samplerConfig.mipLevels - 1 );
 
 			const size_t textureIndex = &gltfTexture - model.asset.textures.data();
 			const bool colorTexture = std::any_of( model.asset.materials.begin(), model.asset.materials.end(), [&]( const auto &material ) {
@@ -509,7 +608,7 @@ namespace xrlib
 			const bool srgbView = colorTexture && outTexture->format == VK_FORMAT_R8G8B8A8_UNORM;
 
 			// Create image
-			vkutils::CreateImage(
+			VK_CHECK_RESULT( vkutils::CreateImage(
 				outTexture->image,
 				outTexture->memory,
 				m_pSession->GetVulkan()->GetVkLogicalDevice(),
@@ -519,26 +618,20 @@ namespace xrlib
 				outTexture->format,
 				VK_IMAGE_TILING_OPTIMAL,
 				VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, srgbView ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0 );
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, srgbView ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0, outTexture->samplerConfig.mipLevels ) );
 
 			// Create image view
-			VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->view, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, outTexture->format, VK_IMAGE_ASPECT_COLOR_BIT ) );
+			VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->view, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, outTexture->format, VK_IMAGE_ASPECT_COLOR_BIT, outTexture->samplerConfig.mipLevels ) );
 
 			if ( srgbView )
-				VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->srgbView, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT ) );
+				VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->srgbView, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, outTexture->samplerConfig.mipLevels ) );
 
 			// Upload image to gpu buffer and transition image for shader reads
 			if ( !m_options.batchTextureUploads )
-				vkutils::UploadTextureDataToImage(
-					m_pSession->GetVulkan()->GetVkLogicalDevice(),
-					m_pSession->GetVulkan()->GetVkPhysicalDevice(),
-					commandPool,
-					m_pSession->GetVulkan()->GetVkQueue_Graphics(),
-					outTexture->image,
-					outTexture->data,
-					outTexture->width,
-					outTexture->height,
-					outTexture->format );
+			{
+				const vkutils::SImageUpload upload { outTexture->image, outTexture->data, static_cast< uint32_t >( outTexture->width ), static_cast< uint32_t >( outTexture->height ), outTexture->format, outTexture->mips };
+				VK_CHECK_RESULT( vkutils::UploadTextureDataToImages( m_pSession->GetVulkan()->GetVkLogicalDevice(), m_pSession->GetVulkan()->GetVkPhysicalDevice(), commandPool, m_pSession->GetVulkan()->GetVkQueue_Graphics(), { &upload, 1 } ) );
+			}
 
 			// Create texture sampler
 			VkSamplerCreateInfo samplerInfo {};
@@ -839,7 +932,7 @@ namespace xrlib
 					-0.7071067811865476f, // sin(90/2) for X rotation
 					0.0f,
 					0.0f,
-					0.7071067811865476f	 // cos(90/2)
+					0.7071067811865476f // cos(90/2)
 				};
 				XrQuaternionf yRotation {
 					0.0f,

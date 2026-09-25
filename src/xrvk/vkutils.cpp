@@ -92,7 +92,7 @@ namespace vkutils
 		VkFormat format, 
 		VkImageTiling tiling, 
 		VkImageUsageFlags usage, 
-		VkMemoryPropertyFlags properties, VkImageCreateFlags flags )
+		VkMemoryPropertyFlags properties, VkImageCreateFlags flags, uint32_t mipLevels )
 	{
 		VkImageCreateInfo imageInfo {};
 		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -101,7 +101,7 @@ namespace vkutils
 		imageInfo.extent.width = width;
 		imageInfo.extent.height = height;
 		imageInfo.extent.depth = 1;
-		imageInfo.mipLevels = 1;
+		imageInfo.mipLevels = mipLevels;
 		imageInfo.arrayLayers = 1;
 		imageInfo.format = format;
 		imageInfo.tiling = tiling;
@@ -126,7 +126,7 @@ namespace vkutils
 		return VK_SUCCESS;
 	}
 
-	VkResult CreateImageView( VkImageView &outImageView, VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspectFlags )
+	VkResult CreateImageView( VkImageView &outImageView, VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels )
 	{
 		VkImageViewCreateInfo viewInfo {};
 		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -135,7 +135,7 @@ namespace vkutils
 		viewInfo.format = format;
 		viewInfo.subresourceRange.aspectMask = aspectFlags;
 		viewInfo.subresourceRange.baseMipLevel = 0;
-		viewInfo.subresourceRange.levelCount = 1;
+		viewInfo.subresourceRange.levelCount = mipLevels;
 		viewInfo.subresourceRange.baseArrayLayer = 0;
 		viewInfo.subresourceRange.layerCount = 1;
 
@@ -241,14 +241,18 @@ namespace vkutils
 
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties( physicalDevice, &properties );
+
 		// Align to both Vulkan's preferred copy offset and all supported texel sizes
 		const VkDeviceSize alignment = std::lcm( VkDeviceSize( 24 ), std::max( VkDeviceSize( 4 ), properties.limits.optimalBufferCopyOffsetAlignment ) );
 		std::vector< VkDeviceSize > offsets;
 		offsets.reserve( images.size() );
+
 		VkDeviceSize size = 0;
+
 		for ( const auto &image : images )
 		{
 			uint32_t texelBytes = 0;
+
 			switch ( image.format )
 			{
 				case VK_FORMAT_R8_UNORM:
@@ -260,6 +264,7 @@ namespace vkutils
 				case VK_FORMAT_R8G8B8_UNORM:
 					texelBytes = 3;
 					break;
+				case VK_FORMAT_R8G8B8A8_SRGB:
 				case VK_FORMAT_R8G8B8A8_UNORM:
 					texelBytes = 4;
 					break;
@@ -278,10 +283,31 @@ namespace vkutils
 				default:
 					return VK_ERROR_FORMAT_NOT_SUPPORTED;
 			}
-			if ( !image.image || !image.width || !image.height || image.data.size() / texelBytes / image.width != image.height || image.data.size() % ( VkDeviceSize( image.width ) * texelBytes ) != 0 )
+
+			if ( !image.image || !image.width || !image.height )
 				return VK_ERROR_INITIALIZATION_FAILED;
+
+			uint32_t width = image.width, height = image.height;
+			const size_t levels = image.mips.empty() ? 1 : image.mips.size();
+
+			for ( size_t level = 0; level < levels; ++level )
+			{
+				const SImageMip mip = image.mips.empty() ? SImageMip { 0, image.data.size() } : image.mips[ level ];
+
+				if ( mip.offset > image.data.size() || mip.size > image.data.size() - mip.offset ||
+					 mip.offset % std::lcm( 4u, texelBytes ) || mip.size / texelBytes / width != height || mip.size % ( VkDeviceSize( width ) * texelBytes ) )
+					return VK_ERROR_INITIALIZATION_FAILED;
+
+				if ( level + 1 < levels && width == 1 && height == 1 )
+					return VK_ERROR_INITIALIZATION_FAILED;
+
+				width = std::max( 1u, width / 2 );
+				height = std::max( 1u, height / 2 );
+			}
+
 			if ( size > UINT64_MAX - alignment || image.data.size() > UINT64_MAX - size - alignment )
 				return VK_ERROR_OUT_OF_HOST_MEMORY;
+
 			size = ( size + alignment - 1 ) / alignment * alignment;
 			offsets.push_back( size );
 			size += image.data.size();
@@ -292,15 +318,19 @@ namespace vkutils
 		bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 		VK_CHECK_RETURN( vkCreateBuffer( device, &bufferInfo, nullptr, &resources.buffer ) );
+
 		VkMemoryRequirements requirements;
 		vkGetBufferMemoryRequirements( device, resources.buffer, &requirements );
+
 		VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
 		allocation.allocationSize = requirements.size;
 		allocation.memoryTypeIndex = FindMemoryType( physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );
 		VK_CHECK_RETURN( vkAllocateMemory( device, &allocation, nullptr, &resources.memory ) );
 		VK_CHECK_RETURN( vkBindBufferMemory( device, resources.buffer, resources.memory, 0 ) );
+
 		void *mapped = nullptr;
 		VK_CHECK_RETURN( vkMapMemory( device, resources.memory, 0, size, 0, &mapped ) );
+
 		for ( size_t i = 0; i < images.size(); ++i )
 			std::memcpy( static_cast< uint8_t * >( mapped ) + offsets[ i ], images[ i ].data.data(), images[ i ].data.size() );
 		vkUnmapMemory( device, resources.memory );
@@ -310,41 +340,60 @@ namespace vkutils
 		commandInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		commandInfo.commandBufferCount = 1;
 		VK_CHECK_RETURN( vkAllocateCommandBuffers( device, &commandInfo, &resources.commands ) );
+
 		VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		VK_CHECK_RETURN( vkBeginCommandBuffer( resources.commands, &begin ) );
+
 		for ( size_t i = 0; i < images.size(); ++i )
 		{
 			VkImageMemoryBarrier barrier { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
 			barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			barrier.image = images[ i ].image;
-			barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+			barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast< uint32_t >( images[ i ].mips.empty() ? 1 : images[ i ].mips.size() ), 0, 1 };
 			barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 			vkCmdPipelineBarrier( resources.commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier );
-			VkBufferImageCopy copy {};
-			copy.bufferOffset = offsets[ i ];
-			copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-			copy.imageExtent = { images[ i ].width, images[ i ].height, 1 };
-			vkCmdCopyBufferToImage( resources.commands, resources.buffer, images[ i ].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy );
+
+			std::vector< VkBufferImageCopy > copies( barrier.subresourceRange.levelCount );
+			uint32_t width = images[ i ].width, height = images[ i ].height;
+
+			for ( uint32_t level = 0; level < copies.size(); ++level )
+			{
+				auto &copy = copies[ level ];
+				copy.bufferOffset = offsets[ i ] + ( images[ i ].mips.empty() ? 0 : images[ i ].mips[ level ].offset );
+				copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+				copy.imageExtent = { width, height, 1 };
+
+				width = std::max( 1u, width / 2 );
+				height = std::max( 1u, height / 2 );
+			}
+
+			vkCmdCopyBufferToImage( resources.commands, resources.buffer, images[ i ].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast< uint32_t >( copies.size() ), copies.data() );
+
 			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 			vkCmdPipelineBarrier( resources.commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier );
 		}
+
 		VK_CHECK_RETURN( vkEndCommandBuffer( resources.commands ) );
+
 		VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 		VK_CHECK_RETURN( vkCreateFence( device, &fenceInfo, nullptr, &resources.fence ) );
+
 		VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 		submit.commandBufferCount = 1;
 		submit.pCommandBuffers = &resources.commands;
 		VK_CHECK_RETURN( vkQueueSubmit( graphicsQueue, 1, &submit, resources.fence ) );
 		resources.submitted = true;
+
 		const auto result = vkWaitForFences( device, 1, &resources.fence, VK_TRUE, UINT64_MAX );
 		resources.submitted = false;
+
 		return result;
 	}
 
