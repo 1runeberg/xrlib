@@ -20,19 +20,8 @@
 #include <unordered_map>
 #include <functional>
 
-// Forward declare tinygltf classes
-namespace tinygltf
-{
-	class TinyGLTF;
-	class Model;
-	class Node;
-	class Mesh;
-	class Texture;
-	class Material;
-	class Skin;
-} // namespace tinygltf
+#include <fastgltf/types.hpp>
 
-using namespace tinygltf;
 namespace xrlib
 {
 	static void inline ExtractEulerAngles( const XrMatrix4x4f &matrix, float &pitch, float &yaw, float &roll )
@@ -91,43 +80,96 @@ namespace xrlib
 		return quaternion;
 	}
 
+	/// <summary>Decoded image data retained between disk loading and GPU upload</summary>
+	struct SGltfImage
+	{
+		std::string name;
+		std::string uri;
+		int width = 0;
+		int height = 0;
+		int component = 4;
+		int bits = 8;
+		std::vector< uint8_t > image;
+	};
+
+	/// <summary>CPU wall-clock durations in milliseconds for completed loading stages</summary>
+	struct SGltfLoadTimings
+	{
+		double diskReadMs = 0;		 // Main glTF/GLB file read; filesystem cache may satisfy the read
+		double parseMs = 0;			 // glTF parsing, validation and external buffer reads
+		double imageDecodeMs = 0;	 // Image decoding, including external image reads
+		double textureUploadMs = 0;	 // Texture creation and upload calls, including their waits
+		double meshConversionMs = 0; // Materials, skins and mesh conversion on the CPU
+	};
+
+	/// <summary>Owns parsed glTF data and decoded images for the two-stage loading API</summary>
+	struct SGltfModel
+	{
+		fastgltf::Asset asset;
+		SGltfLoadTimings timings;
+		std::vector< SGltfImage > images;
+	};
+
+	/// <summary>Loading execution options; decoded pixels and texture settings are unchanged</summary>
+	struct SGltfLoadOptions
+	{
+		uint32_t imageDecodeWorkers = 4; // Maximum concurrent image decoders; 1 selects serial decoding
+		bool batchTextureUploads = true; // Submit texture transfers together instead of one image at a time
+	};
+
 	class CGltf
 	{
 	  public:
 		CGltf( CSession *pSession );
+
+		/// <summary>Creates a loader with explicit execution options for profiling or constrained devices</summary>
+		CGltf( CSession *pSession, SGltfLoadOptions options );
 		~CGltf();
 
 		bool LoadAndParse( CRenderModel *outRenderModel, VkCommandPool commandPool, const std::string &sFilename, XrVector3f scale = { 1.f, 1.f, 1.f } );
-		bool LoadFromDisk( CRenderModel *outRenderModel, tinygltf::Model *outModel, const std::string &sFilename, XrVector3f scale = { 1.f, 1.f, 1.f } );
-		void ParseModel( CRenderModel *outRenderModel, tinygltf::Model *pModel, VkCommandPool commandPool );
+
+		/// <summary>Loads glTF data and decodes images without uploading to the GPU</summary>
+		/// <param name="outRenderModel">Render model whose instance scales will be set after loading</param>
+		/// <param name="outModel">Receives owned data on success; unchanged on failure</param>
+		/// <param name="sFilename">Path to a glTF/GLB file, or an Android asset path</param>
+		/// <param name="scale">Scale applied to each render model instance</param>
+		/// <returns>True if the model and its images loaded successfully</returns>
+		bool LoadFromDisk( CRenderModel *outRenderModel, SGltfModel *outModel, const std::string &sFilename, XrVector3f scale = { 1.f, 1.f, 1.f } );
+
+		/// <summary>Converts a loaded model and uploads its textures using the current Vulkan session</summary>
+		/// <param name="outRenderModel">Receives mesh, material, texture and skin data</param>
+		/// <param name="pModel">Successfully loaded data; must remain alive until this call returns</param>
+		/// <param name="commandPool">Command pool used for texture uploads</param>
+		void ParseModel( CRenderModel *outRenderModel, SGltfModel *pModel, VkCommandPool commandPool );
 
 	  private:
 		CSession *m_pSession = nullptr;
+		SGltfLoadOptions m_options;
 
 		// Helper functions to process gltf data
 		void ProcessNode( 
-			const tinygltf::Model &model, 
-			const tinygltf::Node &node, 
+			const fastgltf::Asset &model,
+			const fastgltf::Node &node,
 			std::vector< SMeshVertex > &vertices, 
 			std::vector< uint32_t > &indices, 
 			std::vector< SMeshSection > &materialSections );
 
 		void ProcessMesh( 
-			const tinygltf::Model &model, 
-			const tinygltf::Mesh &mesh, 
+			const fastgltf::Asset &model,
+			const fastgltf::Mesh &mesh,
 			std::vector< SMeshVertex > &vertices, 
 			std::vector< uint32_t > &indices, 
 			std::vector< SMeshSection > &materialSections );
 
-		void ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const tinygltf::Model &model );
-		void ParseTexture( STexture *outTexture, VkCommandPool commandPool, const tinygltf::Model &model, const tinygltf::Texture &gltfTexture );
-		void IdentifyTextureTypes( std::vector< STexture > &textures, const tinygltf::Model &model );
+		void ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model );
+		void ParseTexture( STexture *outTexture, VkCommandPool commandPool, const SGltfModel &model, const fastgltf::Texture &gltfTexture );
+		void IdentifyTextureTypes( std::vector< STexture > &textures, const fastgltf::Asset &model );
 
-		void ParseMaterials( CRenderModel *outRenderModel, const tinygltf::Model &model );
-		void ParseMaterial( SMaterial *outMaterial, const tinygltf::Model &model, const tinygltf::Material &gltfMaterial );
+		void ParseMaterials( CRenderModel *outRenderModel, const fastgltf::Asset &model );
+		void ParseMaterial( SMaterial *outMaterial, const fastgltf::Asset &model, const fastgltf::Material &gltfMaterial );
 
-		void ParseSkins( CRenderModel *outRenderModel, const tinygltf::Model &model );
-		void ParseSkin( SSkin *outSkin, const tinygltf::Model &model, const tinygltf::Skin &gltfSkin );
+		void ParseSkins( CRenderModel *outRenderModel, const fastgltf::Asset &model );
+		void ParseSkin( SSkin *outSkin, const fastgltf::Asset &model, const fastgltf::Skin &gltfSkin );
 
 		VkFilter ConvertMagFilter( int gltfFilter );
 		VkFilter ConvertMinFilter( int gltfFilter );

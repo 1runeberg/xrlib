@@ -12,14 +12,8 @@
 
 
 #ifdef XR_USE_PLATFORM_ANDROID
-	#define TINYGLTF_ANDROID_LOAD_FROM_ASSETS
+	#include <fastgltf/core.hpp>
 #endif
-
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STBI_ENABLE_WEBP
-#include <xrvk/tinygltf.hpp>
 
 #if defined( _WIN32 ) && defined( RENDERDOC_ENABLE )
 	#define RENDERDOC_FRAME_SAMPLES 5
@@ -166,9 +160,9 @@ namespace xrlib
 		assert( pSession );
 		assert( pSession->GetXrSession() != XR_NULL_HANDLE );
 
-		// Set asset manager for tinygltf (android only)
+		// Set asset manager for fastgltf (android only)
 		#ifdef XR_USE_PLATFORM_ANDROID
-				tinygltf::asset_manager = pSession->GetAppInstance()->GetAssetManager();
+			fastgltf::setAndroidAssetManager( pSession->GetAppInstance()->GetAssetManager() );
 		#endif
 
 		// Validate session's current view configuration
@@ -754,9 +748,9 @@ namespace xrlib
 			vecSubpassDependencies.back().srcSubpass = 2; // Last subpass (main rendering)
 			vecSubpassDependencies.back().dstSubpass = VK_SUBPASS_EXTERNAL;
 			vecSubpassDependencies.back().srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;								  // Final color output stage
-			vecSubpassDependencies.back().dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;										  // Synchronize with external operations
+			vecSubpassDependencies.back().dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;	// Synchronize with external operations
 			vecSubpassDependencies.back().srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; // Color write
-			vecSubpassDependencies.back().dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;												  // Read after the render pass
+			vecSubpassDependencies.back().dstAccessMask = VK_ACCESS_MEMORY_READ_BIT; // Read after the render pass
 			vecSubpassDependencies.back().dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 		}
 		else // Dependencies for a single subpass

@@ -230,15 +230,27 @@ if(NOT XRLIB_OPENXR_LIBRARY)
     add_subdirectory(${OPENXR_ROOT})
 endif()
 
-# Add TinyGLTF
-set(TINYGLTF_HEADER_ONLY ON CACHE INTERNAL "" FORCE)
-set(TINYGLTF_INSTALL OFF CACHE INTERNAL "" FORCE)
+# Add glTF parsing dependencies for xrvk
+function(add_gltf_dependencies)
+    set(BUILD_SHARED_LIBS OFF)
+    set(SIMDJSON_DEVELOPER_MODE OFF CACHE BOOL "" FORCE)
+    set(SIMDJSON_INSTALL OFF CACHE BOOL "" FORCE)
+    set(FASTGLTF_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(FASTGLTF_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(FASTGLTF_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${THIRD_PARTY}/simdjson)
+    add_subdirectory(${THIRD_PARTY}/fastgltf)
+    set_target_properties(simdjson fastgltf PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        ARCHIVE_OUTPUT_DIRECTORY "${XRLIB_LIB_OUT}"
+        ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${XRLIB_LIB_OUT}"
+        ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${XRLIB_LIB_OUT}"
+    )
+endfunction()
 
-if(ANDROID)
-    set(TINYGLTF_ANDROID_LOAD_FROM_ASSETS ON CACHE INTERNAL "" FORCE)
+if(ENABLE_XRVK)
+    add_gltf_dependencies()
 endif()
-
-add_subdirectory(${THIRD_PARTY}/tinygltf)
 
 
 #####################
@@ -366,9 +378,9 @@ else()
                          )
 endif()
 
-    target_link_libraries(${XRLIB} PUBLIC 
-                          tinygltf
-                         )
+if(ENABLE_XRVK)
+    target_link_libraries(${XRLIB} PUBLIC fastgltf::fastgltf)
+endif()
 
 message(STATUS "[${XRLIB}] Third party libraries linked.")
 
