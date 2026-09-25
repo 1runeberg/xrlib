@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -30,7 +30,11 @@
 // Platform-specific headers
 #ifdef XR_PLATFORM_WINDOWS
 	#define WIN32_LEAN_AND_MEAN
-	#define NOMINMAX
+
+	#ifndef NOMINMAX
+		#define NOMINMAX
+	#endif
+
 	#include <windows.h>
 #elif defined( XR_PLATFORM_ANDROID ) || defined( XR_PLATFORM_LINUX )
 	#include <pthread.h>

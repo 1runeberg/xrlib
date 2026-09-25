@@ -1,5 +1,5 @@
 # xrlib
-# Copyright 2024,2025 Copyright Rune Berg 
+# Copyright 2024-26 Rune Berg
 # https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
 # Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
 # SPDX-License-Identifier: Apache-2.0
@@ -306,6 +306,11 @@ if(BUILD_AS_STATIC)
 else()
     add_library(${XRLIB} SHARED ${ALLSOURCE})
     message(STATUS "[${XRLIB}] Project library defined. Will build as: SHARED")
+endif()
+
+# Disable Windows min/max macros for xrlib and its consumers
+if(WIN32)
+    target_compile_definitions(${XRLIB} PUBLIC NOMINMAX)
 endif()
 
 # Keep assertions enabled for Debug, including multi-config generators.
