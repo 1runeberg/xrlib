@@ -29,6 +29,8 @@ namespace xrlib
 		// Destroy logical device
 		if ( m_vkDevice )
 			vkDestroyDevice( m_vkDevice, nullptr );
+		if ( m_vkInstance )
+			vkDestroyInstance( m_vkInstance, nullptr );
 	}
 
 	XrResult CVulkan::Init( 
@@ -97,7 +99,10 @@ namespace xrlib
 		
 		// ... next chain
 		vkDebugCreateInfo.pNext = pVkInstanceNext;
-		vkInstanceCreateInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT *) &vkDebugCreateInfo;
+		vkInstanceCreateInfo.pNext = pVkInstanceNext;
+#ifdef XRVK_VULKAN_DEBUG_ENABLE
+		vkInstanceCreateInfo.pNext = &vkDebugCreateInfo;
+#endif
 
 		VkResult vkResult = VK_SUCCESS;
 		XrResult xrResult = CreateVkInstance( vkResult, GetAppInstance()->GetXrInstance(), &xrVulkanInstanceCreateInfo );
@@ -130,7 +135,13 @@ namespace xrlib
 	}
 
 	XrResult CVulkan::GetVulkanGraphicsRequirements() 
-	{ 
+	{
+		if ( GetAppInstance()->IsExtensionEnabled( XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME ) )
+		{
+			PFN_xrGetVulkanGraphicsRequirements2KHR getRequirements = nullptr;
+			XR_RETURN_ON_ERROR( xrGetInstanceProcAddr( GetAppInstance()->GetXrInstance(), "xrGetVulkanGraphicsRequirements2KHR", reinterpret_cast< PFN_xrVoidFunction * >( &getRequirements ) ) );
+			return getRequirements( GetAppInstance()->GetXrInstance(), GetAppInstance()->GetXrSystemId(), &m_xrGraphicsRequirements );
+		}
 		// Get the vulkan graphics requirements (min/max vulkan api version, etc) of the runtime
 		PFN_xrGetVulkanGraphicsRequirementsKHR xrGetVulkanGraphicsRequirementsKHR = nullptr;
 		XR_RETURN_ON_ERROR( INIT_PFN( GetAppInstance()->GetXrInstance(), xrGetVulkanGraphicsRequirementsKHR ) );
@@ -146,7 +157,13 @@ namespace xrlib
 	}
 
 	XrResult CVulkan::CreateVkInstance( VkResult &outVkResult, const XrInstance xrInstance, const XrVulkanInstanceCreateInfoKHR *xrVulkanInstanceCreateInfo ) 
-	{ 
+	{
+		if ( GetAppInstance()->IsExtensionEnabled( XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME ) )
+		{
+			PFN_xrCreateVulkanInstanceKHR createInstance = nullptr;
+			XR_RETURN_ON_ERROR( xrGetInstanceProcAddr( xrInstance, "xrCreateVulkanInstanceKHR", reinterpret_cast< PFN_xrVoidFunction * >( &createInstance ) ) );
+			return createInstance( xrInstance, xrVulkanInstanceCreateInfo, &m_vkInstance, &outVkResult );
+		}
 		// Check vulkan extensions required by the runtime
 		PFN_xrGetVulkanInstanceExtensionsKHR xrGetVulkanInstanceExtensionsKHR = nullptr;
 		XR_RETURN_ON_ERROR( INIT_PFN( xrInstance, xrGetVulkanInstanceExtensionsKHR ) );	
@@ -179,6 +196,15 @@ namespace xrlib
 	{ 
 		assert( m_vkInstance != VK_NULL_HANDLE );
 
+		if ( GetAppInstance()->IsExtensionEnabled( XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME ) )
+		{
+			PFN_xrGetVulkanGraphicsDevice2KHR getDevice = nullptr;
+			XR_RETURN_ON_ERROR( xrGetInstanceProcAddr( GetAppInstance()->GetXrInstance(), "xrGetVulkanGraphicsDevice2KHR", reinterpret_cast< PFN_xrVoidFunction * >( &getDevice ) ) );
+			XrVulkanGraphicsDeviceGetInfoKHR info { XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR };
+			info.systemId = GetAppInstance()->GetXrSystemId();
+			info.vulkanInstance = m_vkInstance;
+			return getDevice( GetAppInstance()->GetXrInstance(), &info, &m_vkPhysicalDevice );
+		}
 		PFN_xrGetVulkanGraphicsDeviceKHR xrGetVulkanGraphicsDeviceKHR = nullptr;
 		XR_RETURN_ON_ERROR( INIT_PFN( GetAppInstance()->GetXrInstance(), xrGetVulkanGraphicsDeviceKHR ) );
 		XR_RETURN_ON_ERROR( xrGetVulkanGraphicsDeviceKHR( GetAppInstance()->GetXrInstance(), GetAppInstance()->GetXrSystemId(), m_vkInstance, &m_vkPhysicalDevice ) );
@@ -257,62 +283,63 @@ namespace xrlib
 		#endif
 
 		// Setup logical device
-		vkPhysicalDeviceFeatures.samplerAnisotropy = VK_TRUE;
-		// VkPhysicalDeviceFeatures2 physical_features2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-		// physical_features2.features.samplerAnisotropy = VK_TRUE;
-		// physical_features2.features.multiViewport = VK_TRUE;
-		// vkGetPhysicalDeviceFeatures2( m_SharedState.vkPhysicalDevice, &physical_features2 );
+			VkPhysicalDeviceFeatures supportedFeatures {};
+			vkGetPhysicalDeviceFeatures( m_vkPhysicalDevice, &supportedFeatures );
+			vkPhysicalDeviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy;
+			// VkPhysicalDeviceFeatures2 physical_features2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+			// physical_features2.features.samplerAnisotropy = VK_TRUE;
+			// physical_features2.features.multiViewport = VK_TRUE;
+			// vkGetPhysicalDeviceFeatures2( m_SharedState.vkPhysicalDevice, &physical_features2 );
 
-		//// log warning(s) if feature(s) is/are not supported
-		//if ( physical_features2.features.samplerAnisotropy == VK_FALSE || m_SharedState.vkPhysicalDeviceFeatures.samplerAnisotropy == VK_FALSE )
-		//{
-		//	LogWarning( "xrvk", "features.samplerAnisotropy is not available in this gpu, application may not run or render as intended." );
-		// }
+			//// log warning(s) if feature(s) is/are not supported
+			// if ( physical_features2.features.samplerAnisotropy == VK_FALSE || m_SharedState.vkPhysicalDeviceFeatures.samplerAnisotropy == VK_FALSE )
+			//{
+			//	LogWarning( "xrvk", "features.samplerAnisotropy is not available in this gpu, application may not run or render as intended." );
+			//  }
 
-		// Add multiview (required)
-		vkPhysicalDeviceFeatures.multiViewport = VK_TRUE;
-		vkPhysicalDeviceFeatures.sampleRateShading = VK_TRUE;
-		vecLogicalDeviceExtensions.push_back( VK_KHR_MULTIVIEW_EXTENSION_NAME );
+			// Add multiview (required)
+			vkPhysicalDeviceFeatures.multiViewport = supportedFeatures.multiViewport;
+			vkPhysicalDeviceFeatures.sampleRateShading = supportedFeatures.sampleRateShading;
+			vecLogicalDeviceExtensions.push_back( VK_KHR_MULTIVIEW_EXTENSION_NAME );
 
-		std::vector< VkDeviceQueueCreateInfo > vecDeviceQueueCIs;
-		vecDeviceQueueCIs.push_back( vkDeviceQueueCI_Graphics );
+			std::vector< VkDeviceQueueCreateInfo > vecDeviceQueueCIs;
+			vecDeviceQueueCIs.push_back( vkDeviceQueueCI_Graphics );
 
-		bool bTransferIsSameAsGraphics = vkDeviceQueueCI_Graphics.queueFamilyIndex == vkDeviceQueueCI_Transfer.queueFamilyIndex;
-		if (  !bTransferIsSameAsGraphics )
-			vecDeviceQueueCIs.push_back( vkDeviceQueueCI_Transfer );
+			bool bTransferIsSameAsGraphics = vkDeviceQueueCI_Graphics.queueFamilyIndex == vkDeviceQueueCI_Transfer.queueFamilyIndex;
+			if ( !bTransferIsSameAsGraphics )
+				vecDeviceQueueCIs.push_back( vkDeviceQueueCI_Transfer );
 
-		bool bPresentIsUnique =	( vkDeviceQueueCI_Graphics.queueFamilyIndex != vkDeviceQueueCI_Present.queueFamilyIndex ) &&
-			( vkDeviceQueueCI_Transfer.queueFamilyIndex != vkDeviceQueueCI_Present.queueFamilyIndex );
+			bool bPresentIsUnique = ( vkDeviceQueueCI_Graphics.queueFamilyIndex != vkDeviceQueueCI_Present.queueFamilyIndex ) && ( vkDeviceQueueCI_Transfer.queueFamilyIndex != vkDeviceQueueCI_Present.queueFamilyIndex );
 
-		if ( m_vkSupportsSurfacePresent && !bPresentIsUnique )
-			vecDeviceQueueCIs.push_back( vkDeviceQueueCI_Present );
+			if ( m_vkSupportsSurfacePresent && bPresentIsUnique )
+				vecDeviceQueueCIs.push_back( vkDeviceQueueCI_Present );
 
-		VkDeviceCreateInfo vkLogicalDeviceCI { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-		vkLogicalDeviceCI.pNext = pVkLogicalDeviceNext; //&physical_features2;
-		vkLogicalDeviceCI.queueCreateInfoCount = (uint32_t) vecDeviceQueueCIs.size();
-		vkLogicalDeviceCI.pQueueCreateInfos = vecDeviceQueueCIs.data();
-		vkLogicalDeviceCI.enabledLayerCount = 0;
-		vkLogicalDeviceCI.ppEnabledLayerNames = nullptr;
-		vkLogicalDeviceCI.enabledExtensionCount = (uint32_t) vecLogicalDeviceExtensions.size();
-		vkLogicalDeviceCI.ppEnabledExtensionNames = vecLogicalDeviceExtensions.empty() ? nullptr : vecLogicalDeviceExtensions.data();
-		vkLogicalDeviceCI.pEnabledFeatures = &vkPhysicalDeviceFeatures;
+			VkDeviceCreateInfo vkLogicalDeviceCI { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+			vkLogicalDeviceCI.pNext = pVkLogicalDeviceNext; //&physical_features2;
+			vkLogicalDeviceCI.queueCreateInfoCount = (uint32_t) vecDeviceQueueCIs.size();
+			vkLogicalDeviceCI.pQueueCreateInfos = vecDeviceQueueCIs.data();
+			vkLogicalDeviceCI.enabledLayerCount = 0;
+			vkLogicalDeviceCI.ppEnabledLayerNames = nullptr;
+			vkLogicalDeviceCI.enabledExtensionCount = (uint32_t) vecLogicalDeviceExtensions.size();
+			vkLogicalDeviceCI.ppEnabledExtensionNames = vecLogicalDeviceExtensions.empty() ? nullptr : vecLogicalDeviceExtensions.data();
+			vkLogicalDeviceCI.pEnabledFeatures = &vkPhysicalDeviceFeatures;
 
-		XrVulkanDeviceCreateInfoKHR xrVulkanDeviceCreateInfo { XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR };
-		xrVulkanDeviceCreateInfo.next = pXrLogicalDeviceNext;
-		xrVulkanDeviceCreateInfo.systemId = GetAppInstance()->GetXrSystemId();
-		xrVulkanDeviceCreateInfo.pfnGetInstanceProcAddr = &vkGetInstanceProcAddr;
-		xrVulkanDeviceCreateInfo.vulkanCreateInfo = &vkLogicalDeviceCI;
-		xrVulkanDeviceCreateInfo.vulkanPhysicalDevice = m_vkPhysicalDevice;
-		xrVulkanDeviceCreateInfo.vulkanAllocator = nullptr;
+			XrVulkanDeviceCreateInfoKHR xrVulkanDeviceCreateInfo { XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR };
+			xrVulkanDeviceCreateInfo.next = pXrLogicalDeviceNext;
+			xrVulkanDeviceCreateInfo.systemId = GetAppInstance()->GetXrSystemId();
+			xrVulkanDeviceCreateInfo.pfnGetInstanceProcAddr = &vkGetInstanceProcAddr;
+			xrVulkanDeviceCreateInfo.vulkanCreateInfo = &vkLogicalDeviceCI;
+			xrVulkanDeviceCreateInfo.vulkanPhysicalDevice = m_vkPhysicalDevice;
+			xrVulkanDeviceCreateInfo.vulkanAllocator = nullptr;
 
-		// Create logical device
-		VkResult vkResult = VK_SUCCESS;
-		XrResult xrResult = CreateVkDevice( vkResult, &xrVulkanDeviceCreateInfo );
-		if ( !XR_UNQUALIFIED_SUCCESS( xrResult ) || vkResult != VK_SUCCESS )
-		{
-			LogError( XRLIB_NAME, "Error creating vulkan device with openxr result (%s) and vulkan result (%i)", xrlib::XrEnumToString( xrResult ), (int32_t) vkResult );
-			return xrResult == XR_SUCCESS ? XR_ERROR_VALIDATION_FAILURE : xrResult;
-		}
+			// Create logical device
+			VkResult vkResult = VK_SUCCESS;
+			XrResult xrResult = CreateVkDevice( vkResult, &xrVulkanDeviceCreateInfo );
+			if ( !XR_UNQUALIFIED_SUCCESS( xrResult ) || vkResult != VK_SUCCESS )
+			{
+				LogError( XRLIB_NAME, "Error creating vulkan device with openxr result (%s) and vulkan result (%i)", xrlib::XrEnumToString( xrResult ), (int32_t) vkResult );
+				return xrResult == XR_SUCCESS ? XR_ERROR_VALIDATION_FAILURE : xrResult;
+			}
 
 		LogInfo( XRLIB_NAME, "Vulkan (logical) device successfully created." );
 
@@ -353,6 +380,12 @@ namespace xrlib
 		assert( m_vkInstance != VK_NULL_HANDLE );
 		assert( m_vkPhysicalDevice != VK_NULL_HANDLE );
 
+		if ( GetAppInstance()->IsExtensionEnabled( XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME ) )
+		{
+			PFN_xrCreateVulkanDeviceKHR createDevice = nullptr;
+			XR_RETURN_ON_ERROR( xrGetInstanceProcAddr( GetAppInstance()->GetXrInstance(), "xrCreateVulkanDeviceKHR", reinterpret_cast< PFN_xrVoidFunction * >( &createDevice ) ) );
+			return createDevice( GetAppInstance()->GetXrInstance(), xrVulkanDeviceCreateInfo, &m_vkDevice, &outVkResult );
+		}
 		PFN_xrGetVulkanDeviceExtensionsKHR xrGetVulkanDeviceExtensionsKHR = nullptr;
 		XR_RETURN_ON_ERROR( INIT_PFN( GetAppInstance()->GetXrInstance(), xrGetVulkanDeviceExtensionsKHR ) );
 
@@ -426,10 +459,7 @@ namespace xrlib
 
 	const bool CVulkan::IsStencilFormat( VkFormat vkFormat )
 	{
-		if ( vkFormat == VK_FORMAT_D32_SFLOAT || 
-			 vkFormat == VK_FORMAT_D16_UNORM_S8_UINT || 
-			 vkFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
-			 vkFormat == VK_FORMAT_D32_SFLOAT_S8_UINT )
+		if ( vkFormat == VK_FORMAT_D16_UNORM_S8_UINT || vkFormat == VK_FORMAT_D24_UNORM_S8_UINT || vkFormat == VK_FORMAT_D32_SFLOAT_S8_UINT )
 		{
 			return true;
 		}

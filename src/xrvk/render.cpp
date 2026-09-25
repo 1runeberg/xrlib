@@ -192,55 +192,51 @@ namespace xrlib
 		assert( pSession->GetVulkan()->IsDepthFormat( vkDepthFormat ) );
 	};
 
-	CStereoRender::~CStereoRender() 
+	CStereoRender::~CStereoRender()
 	{
-		if ( GetLogicalDevice() != VK_NULL_HANDLE )
+		auto device = GetLogicalDevice();
+		if ( device != VK_NULL_HANDLE )
 		{
-			// Destroy render views
-			for ( auto &renderTarget : m_vecMultiviewRenderTargets )
+			vkDeviceWaitIdle( device );
+			for ( auto &target : m_vecMultiviewRenderTargets )
 			{
-				if ( renderTarget.vkColorImageDescriptor.imageView != VK_NULL_HANDLE )
-					vkDestroyImageView( GetLogicalDevice(), renderTarget.vkColorImageDescriptor.imageView, nullptr );
-
-				if ( renderTarget.vkColorImageDescriptor.imageView != VK_NULL_HANDLE )
-					vkDestroyImageView( GetLogicalDevice(), renderTarget.vkColorImageDescriptor.imageView, nullptr );
-
-				if ( renderTarget.vkDepthImageView != VK_NULL_HANDLE )
-					vkDestroyImageView(GetLogicalDevice(), renderTarget.vkDepthImageView, nullptr );
+				if ( target.vkFrameBuffer )
+					vkDestroyFramebuffer( device, target.vkFrameBuffer, nullptr );
+				if ( target.vkColorImageDescriptor.imageView )
+					vkDestroyImageView( device, target.vkColorImageDescriptor.imageView, nullptr );
+				if ( target.vkDepthImageView )
+					vkDestroyImageView( device, target.vkDepthImageView, nullptr );
+				if ( target.vkMSAAColorView )
+					vkDestroyImageView( device, target.vkMSAAColorView, nullptr );
+				if ( target.vkMSAADepthView )
+					vkDestroyImageView( device, target.vkMSAADepthView, nullptr );
+				if ( target.vkMSAAColorTexture )
+					vkDestroyImage( device, target.vkMSAAColorTexture, nullptr );
+				if ( target.vkMSAADepthTexture )
+					vkDestroyImage( device, target.vkMSAADepthTexture, nullptr );
+				if ( target.vkMSAAColorMemory )
+					vkFreeMemory( device, target.vkMSAAColorMemory, nullptr );
+				if ( target.vkMSAADepthMemory )
+					vkFreeMemory( device, target.vkMSAADepthMemory, nullptr );
+				if ( target.vkColorImageDescriptor.sampler )
+					vkDestroySampler( device, target.vkColorImageDescriptor.sampler, nullptr );
+				if ( target.vkRenderCommandFence )
+					vkDestroyFence( device, target.vkRenderCommandFence, nullptr );
+				if ( target.vkTransferCommandFence )
+					vkDestroyFence( device, target.vkTransferCommandFence, nullptr );
 			}
-
-			// Destroy render pass
-			for ( auto renderPass : vecRenderPasses )
-			{
-				if ( renderPass != VK_NULL_HANDLE )
-					vkDestroyRenderPass( GetLogicalDevice(), renderPass, nullptr );
-			}
-
-			// Destroy samplers, frame buffers and fences
-			for ( auto &renderTarget : m_vecMultiviewRenderTargets )
-			{
-				if ( renderTarget.vkColorImageDescriptor.sampler != VK_NULL_HANDLE )
-					vkDestroySampler( GetLogicalDevice(), renderTarget.vkColorImageDescriptor.sampler, nullptr );
-
-				if ( renderTarget.vkFrameBuffer != VK_NULL_HANDLE )
-					vkDestroyFramebuffer( GetLogicalDevice(), renderTarget.vkFrameBuffer, nullptr );
-
-				if ( renderTarget.vkRenderCommandFence != VK_NULL_HANDLE )
-					vkDestroyFence( GetLogicalDevice(), renderTarget.vkRenderCommandFence, nullptr );
-			}
+			for ( auto pass : vecRenderPasses )
+				if ( pass )
+					vkDestroyRenderPass( device, pass, nullptr );
+			if ( m_vkTransferCommandPool )
+				vkDestroyCommandPool( device, m_vkTransferCommandPool, nullptr );
+			if ( m_vkRenderCommandPool )
+				vkDestroyCommandPool( device, m_vkRenderCommandPool, nullptr );
 		}
-
-		if ( m_xrColorSwapchain != XR_NULL_HANDLE )
+		if ( m_xrColorSwapchain )
 			xrDestroySwapchain( m_xrColorSwapchain );
-
-		if ( m_xrDepthSwapchain != XR_NULL_HANDLE )
+		if ( m_xrDepthSwapchain )
 			xrDestroySwapchain( m_xrDepthSwapchain );
-
-		if ( m_vkTransferCommandPool != VK_NULL_HANDLE )
-			vkDestroyCommandPool( GetLogicalDevice(), m_vkTransferCommandPool, nullptr );
-
-		if ( m_vkRenderCommandPool != VK_NULL_HANDLE )
-			vkDestroyCommandPool( GetLogicalDevice(), m_vkRenderCommandPool, nullptr );
 	}
 
 	XrResult CStereoRender::Init( uint32_t unTextureFaceCount, uint32_t unTextureMipCount ) 
@@ -450,6 +446,7 @@ namespace xrlib
 			VK_CHECK_RESULT( vkBindImageMemory( GetLogicalDevice(), msaaImage, msaaMemory, 0 ) );
 
 			m_vecMultiviewRenderTargets.back().vkMSAAColorTexture = msaaImage;
+			m_vecMultiviewRenderTargets.back().vkMSAAColorMemory = msaaMemory;
 
 			// Runtime provided image becomes msaa resolve target
 			m_vecMultiviewRenderTargets.back().vkColorTexture = m_vecSwapchainColorImages[ i ].image;
@@ -524,6 +521,7 @@ namespace xrlib
 			VK_CHECK_RESULT( vkBindImageMemory( GetLogicalDevice(), msaaDepthImage, msaaDepthMemory, 0 ) );
 
 			m_vecMultiviewRenderTargets.back().vkMSAADepthTexture = msaaDepthImage;
+			m_vecMultiviewRenderTargets.back().vkMSAADepthMemory = msaaDepthMemory;
 
 			// Create MSAA depth view
 			VkImageViewCreateInfo msaaDepthViewCI { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
@@ -531,7 +529,7 @@ namespace xrlib
 			msaaDepthViewCI.image = msaaDepthImage;
 			msaaDepthViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
 			msaaDepthViewCI.format = m_vkDepthFormat;
-			msaaDepthViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+			msaaDepthViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | ( m_pSession->GetVulkan()->IsStencilFormat( m_vkDepthFormat ) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0 );
 			msaaDepthViewCI.subresourceRange.baseMipLevel = 0;
 			msaaDepthViewCI.subresourceRange.levelCount = 1;
 			msaaDepthViewCI.subresourceRange.baseArrayLayer = 0;
@@ -545,7 +543,7 @@ namespace xrlib
 			imageViewCI.pNext = NULL;
 			imageViewCI.flags = depthCreateFlags;
 			imageViewCI.format = m_vkDepthFormat;
-			imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+			imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | ( m_pSession->GetVulkan()->IsStencilFormat( m_vkDepthFormat ) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0 );
 			imageViewCI.image = m_vecMultiviewRenderTargets.back().vkDepthTexture;
 
 			result = vkCreateImageView( 
@@ -651,6 +649,7 @@ namespace xrlib
 		// Resolve depth attachment (runtime image - resolve target)
 		VkAttachmentDescription2 resolveDepthStencilAttachment = GenerateDepthAttachmentDescription();
 		resolveDepthStencilAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		resolveDepthStencilAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // OpenXR consumes resolved depth.
 		vecAttachmentDescriptions.push_back( resolveDepthStencilAttachment );
 
 		// Define Subpass Descriptions
@@ -748,9 +747,9 @@ namespace xrlib
 			vecSubpassDependencies.back().srcSubpass = 2; // Last subpass (main rendering)
 			vecSubpassDependencies.back().dstSubpass = VK_SUBPASS_EXTERNAL;
 			vecSubpassDependencies.back().srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;								  // Final color output stage
-			vecSubpassDependencies.back().dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;	// Synchronize with external operations
+			vecSubpassDependencies.back().dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;										  // Synchronize with external operations
 			vecSubpassDependencies.back().srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; // Color write
-			vecSubpassDependencies.back().dstAccessMask = VK_ACCESS_MEMORY_READ_BIT; // Read after the render pass
+			vecSubpassDependencies.back().dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;												  // Read after the render pass
 			vecSubpassDependencies.back().dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 		}
 		else // Dependencies for a single subpass
@@ -1102,7 +1101,7 @@ namespace xrlib
 		multisampleCI.pNext = pNext;
 		multisampleCI.flags = createFlags;
 		multisampleCI.rasterizationSamples = rasterizationSamples;
-		multisampleCI.sampleShadingEnable = sampleShadingEnable;
+		multisampleCI.sampleShadingEnable = sampleShadingEnable && m_pSession->GetVulkan()->vkPhysicalDeviceFeatures.sampleRateShading;
 		multisampleCI.minSampleShading = minSampleShading;
 		multisampleCI.pSampleMask = pSampleMask;
 		multisampleCI.alphaToCoverageEnable = alphaToCoverageEnable;
@@ -1787,13 +1786,12 @@ namespace xrlib
 		return VK_SUCCESS;
 	}
 
-	void CStereoRender::RenderFrame( 
-		const VkRenderPass renderPass, 
-		CRenderInfo *pRenderInfo, 
-		std::vector< CPlane2D * > &stencils ) 
-	{ 
-		if( StartRenderFrame( pRenderInfo ) )
-			EndRenderFrame( renderPass, pRenderInfo, stencils );
+	XrResult CStereoRender::RenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils )
+	{
+		XrResult result = m_pSession->StartFrame( &pRenderInfo->state.frameState );
+		if ( XR_FAILED( result ) )
+			return result;
+		return EndRenderFrame( renderPass, pRenderInfo, stencils );
 	}
 
 	bool CStereoRender::StartRenderFrame( CRenderInfo* pRenderInfo ) 
@@ -1804,9 +1802,11 @@ namespace xrlib
 		return true;
 	}
 
-	void CStereoRender::EndRenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils ) 
+	XrResult CStereoRender::EndRenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils )
 	{
 		auto &state = pRenderInfo->state;
+		// Per-eye next-chain storage must survive until xrEndFrame returns.
+		std::vector< XrCompositionLayerDepthInfoKHR > depthInfos( k_EyeCount );
 
 		// Render frame
 		if ( state.frameState.shouldRender )
@@ -1826,7 +1826,7 @@ namespace xrlib
 			if ( state.sharedEyeState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT )
 			{
 				// Update Hmd pose
-				m_pSession->UpdateHmdPose( state.frameState.predictedDisplayTime + state.frameState.predictedDisplayPeriod );
+				m_pSession->UpdateHmdPose( state.frameState.predictedDisplayTime );
 				m_pSession->GetHmdPose( state.hmdPose );
 
 				// Acquire swapchain images
@@ -1845,7 +1845,8 @@ namespace xrlib
 					state.projectionLayerViews[ i ].subImage.imageRect.offset = { 0, 0 };
 					state.projectionLayerViews[ i ].subImage.imageRect.extent = GetTexutreExtent2Di();
 
-					XrCompositionLayerDepthInfoKHR depthInfo { XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR };
+					auto &depthInfo = depthInfos[ i ];
+					depthInfo.type = XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR;
 					depthInfo.subImage.swapchain = GetDepthSwapchain();
 					depthInfo.subImage.imageArrayIndex = i;
 					depthInfo.subImage.imageRect.offset = state.imageRectOffsets[ i ];
@@ -1855,7 +1856,7 @@ namespace xrlib
 					depthInfo.nearZ = state.nearZ;
 					depthInfo.farZ = state.farZ;
 
-					state.projectionLayerViews[ i ].next = &depthInfo;
+					state.projectionLayerViews[ i ].next = GetAppInstance()->IsExtensionEnabled( XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME ) ? &depthInfo : nullptr;
 				}
 
 				// Calculate view projection matrices for each eye
@@ -1928,7 +1929,7 @@ namespace xrlib
 					BeginBufferUpdates( state.unCurrentSwapchainImage_Color );
 
 					// Update asset buffers
-					XrTime renderTime = state.frameState.predictedDisplayTime + state.frameState.predictedDisplayPeriod;
+					XrTime renderTime = state.frameState.predictedDisplayTime;
 
 					for ( auto &renderable : pRenderInfo->vecRenderables )
 					{
@@ -1989,8 +1990,10 @@ namespace xrlib
 		}
 
 		// End frame
-		m_pSession->EndFrame( &state.frameState, state.frameLayers, state.environmentBlendMode );
+		const XrResult result = m_pSession->EndFrame( &state.frameState, state.frameLayers, state.environmentBlendMode );
 		state.frameLayers.clear();
+		for ( auto &view : state.projectionLayerViews )
+			view.next = nullptr;
 
 		#if defined( _WIN32 ) && defined( RENDERDOC_ENABLE )
 			if ( rdoc_api && rdoc_api->GetNumCaptures() < RENDERDOC_FRAME_SAMPLES )
@@ -2001,6 +2004,7 @@ namespace xrlib
 					LogError( "RENDERDOC", "FAILED FRAME CAPTURE for frame: %i", rdoc_api->GetNumCaptures() + 1 );
 			}
 		#endif
+			return result;
 	}
 
 	void CStereoRender::BeginDraw(

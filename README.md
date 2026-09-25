@@ -174,3 +174,20 @@ When developing with the library:
     - Source files are in `src` directory
     - Shader sources are in `res/shaders/src`
     - Build artifacts are placed in `bin` and `lib` directories
+
+## Embedded OpenXR runtimes and visionOS
+
+An experimental visionOS 27 build is exercised by the independent xrlib+xrvk sample
+in [xrlib-demos/visionos-xr](https://github.com/1runeberg/xrlib-demos/tree/main/visionos-xr).
+See its README for build and validation instructions.
+The runtime remains a separate binary; xrlib does not include its implementation.
+
+Applications enabling `XR_KHR_vulkan_enable2` now use the standard enable2 requirements,
+instance/device creation and GPU-selection functions. The legacy route remains available
+when the application enables `XR_KHR_vulkan_enable`. Use LOCAL space on platforms that
+do not advertise STAGE, and select formats from the runtime's advertised list.
+
+For app-embedded providers, set CMake `XRLIB_OPENXR_LIBRARY` to the provider binary.
+This replaces the bundled OpenXR loader, preventing duplicate `xr*` providers. Optional
+`XRLIB_LIB_OUT` and `XRLIB_BIN_OUT` keep cross-platform build artifacts separate.
+The ordinary build continues to use the bundled loader when no external provider is set.

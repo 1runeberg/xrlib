@@ -202,12 +202,14 @@ namespace xrlib
 		struct SMultiviewRenderTarget
 		{
 			 VkImage vkMSAAColorTexture = VK_NULL_HANDLE;
+			 VkDeviceMemory vkMSAAColorMemory = VK_NULL_HANDLE; ///< Owned allocation, freed after its image.
 			 VkImageView vkMSAAColorView = VK_NULL_HANDLE;
 
 			 VkImage vkColorTexture = VK_NULL_HANDLE;
 			 VkDescriptorImageInfo vkColorImageDescriptor { VK_NULL_HANDLE, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 
 			 VkImage vkMSAADepthTexture = VK_NULL_HANDLE;
+			 VkDeviceMemory vkMSAADepthMemory = VK_NULL_HANDLE; ///< Owned allocation, freed after its image.
 			 VkImageView vkMSAADepthView = VK_NULL_HANDLE;
 
 			 VkImage vkDepthTexture = VK_NULL_HANDLE;
@@ -443,9 +445,21 @@ namespace xrlib
 			std::vector< VkDescriptorSetLayout > &layouts );
 
 		VkResult AddRenderPass( VkRenderPassCreateInfo2 *renderPassCI, VkAllocationCallbacks *pAllocator = nullptr );
-		void RenderFrame( const VkRenderPass renderPass, CRenderInfo* pRenderInfo, std::vector< CPlane2D * > &stencils );
+		/** @brief Render a complete XR frame and report wait/begin/end failures.
+		 * @param[in] renderPass Renderer-owned pass compatible with its targets.
+		 * @param[in] pRenderInfo Borrowed scene and per-frame state.
+		 * @param[in] stencils Optional borrowed visibility-mask geometry.
+		 * @return Frame transport result; failure must not be counted as a presented frame.
+		 */
+		XrResult RenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils );
 		bool StartRenderFrame( CRenderInfo *pRenderInfo );
-		void EndRenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils );
+		/** @brief Render and end a frame previously begun by StartRenderFrame.
+		 * @param[in] renderPass Renderer-owned pass compatible with its targets.
+		 * @param[in] pRenderInfo Borrowed scene and begun-frame state.
+		 * @param[in] stencils Optional borrowed visibility-mask geometry.
+		 * @return The xrEndFrame result, including validation or native presentation failure.
+		 */
+		XrResult EndRenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils );
 
 		void BeginDraw(
 			const uint32_t unSwpachainImageIndex,

@@ -41,33 +41,20 @@ namespace xrlib
 	}
 
 	XrResult CSession::Init( SSessionSettings &settings ) 
-	{ 
-		// Enable multiview rendering
+	{
+		// Keep the feature chain alive until Vulkan device creation returns. Do not
+		// store this temporary address in the caller's reusable settings object.
+		VkPhysicalDeviceVulkan11Features vkPhysicalFeatures11 { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+		void *pLogicalDeviceNext = settings.pVkLogicalDeviceNext;
 		if ( settings.bUseMultiviewRendering )
 		{
-			VkPhysicalDeviceVulkan11Features vkPhysicalFeatures11 { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 			vkPhysicalFeatures11.multiview = VK_TRUE;
-
-			if ( settings.pVkLogicalDeviceNext )
-			{
-				vkPhysicalFeatures11.pNext = settings.pVkLogicalDeviceNext;
-				settings.pVkLogicalDeviceNext = &vkPhysicalFeatures11;
-			}
-			else
-			{
-				settings.pVkLogicalDeviceNext = &vkPhysicalFeatures11;
-			}
+			vkPhysicalFeatures11.pNext = pLogicalDeviceNext;
+			pLogicalDeviceNext = &vkPhysicalFeatures11;
 		}
 
 		// Init rendering
-		return Init(
-			settings.pSurface,
-			settings.flgAdditionalCreateInfo, 
-			settings.pVkInstanceNext, 
-			settings.pXrVkInstanceNext, 
-			settings.pVkLogicalDeviceNext, 
-			settings.pXrLogicalDeviceNext
-		); 
+		return Init( settings.pSurface, settings.flgAdditionalCreateInfo, settings.pVkInstanceNext, settings.pXrVkInstanceNext, pLogicalDeviceNext, settings.pXrLogicalDeviceNext );
 	}
 
 	XrResult CSession::Init(
@@ -220,8 +207,10 @@ namespace xrlib
 
 		XrEventDataBuffer xrEventDataBuffer { XR_TYPE_EVENT_DATA_BUFFER };
 		XrResult result = xrPollEvent( m_pInstance->GetXrInstance(), &xrEventDataBuffer );
-		if ( !XR_SUCCEEDED( result ) )
-				return result;
+		// XR_EVENT_UNAVAILABLE is a successful status, but there is no event to
+		// process. Preserve it so callers can drain the queue without spinning.
+		if ( result != XR_SUCCESS )
+			return result;
 
 		// Internal event processing
 		outEventData->type = xrEventDataBuffer.type;
