@@ -16,7 +16,7 @@ jobs:
           matrix-json: >
             {
               "os": ["windows-latest"],
-              "build_type": ["debug", "release"],
+              "build_type": ["Debug", "Release"],
               "enable_xrvk": ["ON", "OFF"],
               "cpp_compiler": ["cl"]
             }

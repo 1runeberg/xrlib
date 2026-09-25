@@ -28,16 +28,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 1
     
-      - name: Get cmake-latest
-        uses: lukka/get-cmake@latest
+      - name: Set up CMake
+        uses: lukka/get-cmake@1585ab63d6b868cbe53e9d1c2fa929b04b1ec2da # v4.4.2
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
         with:
           key: android-arm64-v8a-${{ matrix.build_type }}-c++_shared
 
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload build artifact
         if: ${{ inputs.export-artifacts == 'ON' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
             name: xrlib-static_${{ inputs.build-as-static }}-xrvk_${{ matrix.enable_xrvk }}
             path: lib

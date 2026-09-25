@@ -15,7 +15,7 @@
 #define TINYGLTF_ANDROID_LOAD_FROM_ASSETS
 #endif
 
-#include <tinygltf/tiny_gltf.h>
+#include <xrvk/tinygltf.hpp>
 #include <xrvk/gltf.hpp>
 #include <xrvk/texture.hpp>
 

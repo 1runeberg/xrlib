@@ -14,7 +14,7 @@ jobs:
         with:
           matrix-json: >
             {
-              "build_type": ["release"],
+              "build_type": ["Release"],
               "enable_xrvk": ["ON", "OFF"]
             }
           build-as-static : "OFF"
@@ -25,7 +25,7 @@ jobs:
         with:
           matrix-json: >
             {
-              "build_type": ["release"],
+              "build_type": ["Release"],
               "enable_xrvk": ["ON", "OFF"]
             }
           build-as-static : "ON"
@@ -44,38 +44,38 @@ jobs:
                 mkdir ${{ github.ref_name }}_xrlib_binaries_android-static/no_renderer
 
             # Download build artifacts
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-static_OFF-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_android-shared/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-static_OFF-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_android-shared/no_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-static_ON-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_android-static/with_renderer
 
-            - uses: actions/download-artifact@v4
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
                 name: xrlib-static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_android-static/no_renderer
 
             # Upload final release artifacts
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: xrlib-${{ github.ref_name }}-android-shared-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_android-shared
 
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: xrlib-${{ github.ref_name }}-android-static-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_android-static
 
-            - uses: geekyeggo/delete-artifact@v5
+            - uses: geekyeggo/delete-artifact@f275313e70c08f6120db482d7a6b98377786765b # v5.1.0
               with:
                 name: |
                     xrlib-shared_*

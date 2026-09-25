@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      # TinyGLTF v3 requires an API migration; update the v2 pin manually.
+      - dependency-name: "*tinygltf*"

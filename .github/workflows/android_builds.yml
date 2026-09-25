@@ -15,7 +15,7 @@ jobs:
         with:
           matrix-json: >
             {
-              "build_type": ["debug", "release"],
+              "build_type": ["Debug", "Release"],
               "enable_xrvk": ["ON", "OFF"]
             }
           build-as-static : "OFF"
