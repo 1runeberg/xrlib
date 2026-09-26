@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -27,10 +27,10 @@ namespace xrlib
 		UnmapMemory();
 
 		if ( m_vkBufferInfo.buffer != VK_NULL_HANDLE )
-			vkDestroyBuffer( GetLogicalDevice(), m_vkBufferInfo.buffer, nullptr );
+			vkDestroyBuffer( GetLogicalDevice(), m_vkBufferInfo.buffer, m_pCallbacks );
 
 		if ( m_vkDeviceMemory != VK_NULL_HANDLE )
-			vkFreeMemory( GetLogicalDevice(), m_vkDeviceMemory, nullptr );
+			vkFreeMemory( GetLogicalDevice(), m_vkDeviceMemory, m_pCallbacks );
 	}
 
 	VkResult CDeviceBuffer::Init( 
@@ -43,6 +43,12 @@ namespace xrlib
 	{ 
 		assert( usageFlags != 0 );
 		assert( memPropFlags != 0 );
+
+		if ( pCallbacks )
+		{
+			m_callbacks = *pCallbacks;
+			m_pCallbacks = &m_callbacks;
+		}
 
 		// Create vulkan buffer
 		VkBufferCreateInfo bufferCI { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
@@ -126,6 +132,9 @@ namespace xrlib
 
 	VkResult CDeviceBuffer::MapMemory() 
 	{ 
+		if ( m_pData )
+			return VK_SUCCESS;
+
 		return vkMapMemory( GetLogicalDevice(), m_vkDeviceMemory, 0, m_vkMemorySize, 0, &m_pData ); 
 	}
 

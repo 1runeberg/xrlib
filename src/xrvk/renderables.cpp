@@ -76,13 +76,13 @@ namespace xrlib
 	VkResult CRenderable::InitBuffer( CDeviceBuffer *pBuffer, VkBufferUsageFlags usageFlags, VkDeviceSize unSize, void *pData, VkMemoryPropertyFlags memPropFlags, VkAllocationCallbacks *pCallbacks )
 	{
 		assert( pBuffer );
-		return pBuffer->Init( usageFlags, memPropFlags, unSize, pData, pCallbacks );
+		return pBuffer->Init( usageFlags, memPropFlags, unSize, pData, true, pCallbacks );
 	}
 
 	VkResult CRenderable::InitInstancesBuffer( CDeviceBuffer *pBuffer, VkBufferUsageFlags usageFlags, VkDeviceSize unSize, void *pData, VkMemoryPropertyFlags memPropFlags, VkAllocationCallbacks *pCallbacks )
 	{
 		assert( pBuffer );
-		return pBuffer->Init( usageFlags, memPropFlags, unSize, pData, pCallbacks );
+		return pBuffer->Init( usageFlags, memPropFlags, unSize, pData, true, pCallbacks );
 	}
 
 	CDeviceBuffer *CRenderable::UpdateInstancesBuffer( VkCommandBuffer transferCmdBuffer )
@@ -245,8 +245,8 @@ namespace xrlib
 		std::vector< VkDescriptorSet > sceneLightingSets;
 		VkResult result = pDescriptors->CreateDescriptorSets(
 			sceneLightingSets,
-			lightingPoolId,
 			lightingLayoutId,
+			lightingPoolId,
 			1 // Single set
 		);
 
