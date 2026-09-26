@@ -196,7 +196,8 @@ namespace xrlib
 		for ( size_t i = 0; i < materials.size(); ++i )
 		{
 			auto &material = materials[ i ];
-			VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorSets( material.descriptors, poolId, layoutId, 1 ) );
+			if ( pRenderInfo->pDescriptors->CreateDescriptorSets( material.descriptors, layoutId, poolId, 1 ) != VK_SUCCESS )
+				return 0;
 			const int maps[] = { material.baseColorTexture, material.metallicRoughnessTexture, material.normalTexture, material.emissiveTexture, material.occlusionTexture };
 			material.setTextureFlag( TEXTURE_BASE_COLOR_SRGB_BIT, false );
 			material.setTextureFlag( TEXTURE_EMISSIVE_SRGB_BIT, false );
