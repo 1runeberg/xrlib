@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -101,6 +101,7 @@ namespace xrlib
 
 		uint32_t pbrFragmentDescriptorLayout = 0;
 		uint32_t pbrFragmentDescriptorPool = 0;
+		uint32_t skinningDescriptorLayout = UINT32_MAX;
 	};
 
 	struct SShader
@@ -380,6 +381,7 @@ namespace xrlib
 			std::string sVertexShaderFilename,
 			std::string sFragmentShaderFilename );
 
+		// Enable skinning on the main PBR layout when using mesh_pbr_skin.vert
 		VkResult CreateGraphicsPipeline_PBR(
 		#ifdef XR_USE_PLATFORM_ANDROID
 			AAssetManager *assetManager,
@@ -391,7 +393,8 @@ namespace xrlib
 			VkRenderPass vkRenderPass,
 			std::string sVertexShaderFilename,
 			std::string sFragmentShaderFilename,
-			bool bCreateAsMainPBRPipeline );
+			bool bCreateAsMainPBRPipeline,
+			bool bEnableSkinning = false );
 
 		VkResult CreateGraphicsPipeline_CustomPBR(
 			#ifdef XR_USE_PLATFORM_ANDROID
@@ -445,6 +448,7 @@ namespace xrlib
 			std::vector< VkDescriptorSetLayout > &layouts );
 
 		VkResult AddRenderPass( VkRenderPassCreateInfo2 *renderPassCI, VkAllocationCallbacks *pAllocator = nullptr );
+
 		/** @brief Render a complete XR frame and report wait/begin/end failures.
 		 * @param[in] renderPass Renderer-owned pass compatible with its targets.
 		 * @param[in] pRenderInfo Borrowed scene and per-frame state.
@@ -453,6 +457,7 @@ namespace xrlib
 		 */
 		XrResult RenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils );
 		bool StartRenderFrame( CRenderInfo *pRenderInfo );
+
 		/** @brief Render and end a frame previously begun by StartRenderFrame.
 		 * @param[in] renderPass Renderer-owned pass compatible with its targets.
 		 * @param[in] pRenderInfo Borrowed scene and begun-frame state.

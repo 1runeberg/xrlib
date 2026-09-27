@@ -368,11 +368,15 @@ namespace xrlib
 		ParseMaterials( outRenderModel, pModel->asset );
 		ParseSkins( outRenderModel, pModel->asset );
 
-		// Process all nodes in the scene
-		for ( size_t unNode : pModel->asset.scenes[ 0 ].nodeIndices )
+		// Retain node-to-vertex ranges for this model
+		std::vector< SAnimationMesh > meshes;
+		for ( size_t unNode : pModel->asset.scenes.at( pModel->asset.defaultScene.value_or( 0 ) ).nodeIndices )
 		{
-			ProcessNode( pModel->asset, pModel->asset.nodes[ unNode ], outRenderModel->vertices, outRenderModel->indices, outRenderModel->materialSections );
+			ProcessNode( pModel->asset, pModel->asset.nodes[ unNode ], outRenderModel->vertices, outRenderModel->indices, outRenderModel->materialSections, meshes );
 		}
+		// Retain the rest hierarchy for static node transforms as well as animation
+		outRenderModel->pAnimation = std::make_unique< CAnimation >( pModel->asset, outRenderModel->vertices, meshes );
+
 		pModel->timings.meshConversionMs = ElapsedMilliseconds( started );
 	}
 
@@ -381,18 +385,21 @@ namespace xrlib
 		const fastgltf::Node &node,
 		std::vector< SMeshVertex > &vertices, 
 		std::vector< uint32_t > &indices, 
-		std::vector< SMeshSection > &materialSections )
+		std::vector< SMeshSection > &materialSections,
+		std::vector< SAnimationMesh > &meshes )
 	{
 		// Process mesh if present
 		if ( node.meshIndex.has_value() )
 		{
+			const size_t first = vertices.size();
 			ProcessMesh( model, model.meshes[ *node.meshIndex ], vertices, indices, materialSections );
+			meshes.push_back( { static_cast< size_t >( &node - model.nodes.data() ), first, vertices.size() - first } );
 		}
 
 		// Process child nodes
 		for ( size_t i = 0; i < node.children.size(); i++ )
 		{
-			ProcessNode( model, model.nodes[ node.children[ i ] ], vertices, indices, materialSections );
+			ProcessNode( model, model.nodes[ node.children[ i ] ], vertices, indices, materialSections, meshes );
 		}
 	}
 
@@ -406,6 +413,12 @@ namespace xrlib
 		// Process each primitive in the mesh
 		for ( const auto &primitive : mesh.primitives )
 		{
+			if ( primitive.type != fastgltf::PrimitiveType::Triangles )
+				throw std::runtime_error( "xrvk mesh loading requires triangle primitives" );
+
+			if ( primitive.findAttribute( "JOINTS_1" ) != primitive.attributes.end() )
+				throw std::runtime_error( "xrvk supports four joint influences per vertex" );
+
 			uint32_t vertexBase = vertices.size();
 
 			// Get accessor for vertex positions (required)
@@ -497,6 +510,39 @@ namespace xrlib
 				for ( size_t i = 0; i < posAccessor.count; ++i )
 					indices.push_back( vertexBase + static_cast< uint32_t >( i ) );
 			const uint32_t count = static_cast< uint32_t >( indices.size() ) - firstIndex;
+			if ( count % 3 != 0 )
+				throw std::runtime_error( "Incomplete glTF triangle" );
+
+			// Missing normals require flat shading, split shared vertices at each face
+			if ( primitive.findAttribute( "NORMAL" ) == primitive.attributes.end() )
+			{
+				std::vector< SMeshVertex > flatVertices;
+				flatVertices.reserve( count );
+				for ( size_t i = firstIndex; i < indices.size(); i += 3 )
+				{
+					const auto a = vertices[ indices[ i ] ];
+					const auto b = vertices[ indices[ i + 1 ] ];
+					const auto c = vertices[ indices[ i + 2 ] ];
+					using fastgltf::math::fvec3;
+					const auto edge1 = fvec3( b.position.x - a.position.x, b.position.y - a.position.y, b.position.z - a.position.z );
+					const auto edge2 = fvec3( c.position.x - a.position.x, c.position.y - a.position.y, c.position.z - a.position.z );
+					auto normal = fastgltf::math::cross( edge1, edge2 );
+
+					// Degenerate faces don't contribute fragments, retain a finite normal
+					normal = fastgltf::math::dot( normal, normal ) > 1e-20f ? fastgltf::math::normalize( normal ) : fvec3( 0.f, 1.f, 0.f );
+					for ( auto vertex : { a, b, c } )
+					{
+						vertex.normal = { normal[ 0 ], normal[ 1 ], normal[ 2 ] };
+						flatVertices.push_back( vertex );
+					}
+				}
+
+				vertices.resize( vertexBase );
+				vertices.insert( vertices.end(), flatVertices.begin(), flatVertices.end() );
+				for ( size_t i = 0; i < count; ++i )
+					indices[ firstIndex + i ] = vertexBase + static_cast< uint32_t >( i );
+			}
+
 			if ( count )
 				materialSections.push_back( { firstIndex, count, static_cast< uint32_t >( primitive.materialIndex.value_or( model.materials.size() ) ) } );
 		}
@@ -864,13 +910,6 @@ namespace xrlib
 			ParseSkin( &outRenderModel->skins[ i ], model, model.skins[ i ] );
 		}
 
-		if ( model.skins.size() > MAX_JOINT_COUNT )
-		{
-			LogError( XRLIB_NAME, "Max joint count (%i) execeeded in gltf file (%i).\nLoad skeletal meshes as single files if possible.", 
-				MAX_JOINT_COUNT, model.skins.size() );
-			throw std::runtime_error( "Maximum joints supported by the renderer reached in glTF file" );
-		}
-			
 	}
 
 	void CGltf::ParseSkin( SSkin *outSkin, const fastgltf::Asset &model, const fastgltf::Skin &gltfSkin )
@@ -923,91 +962,21 @@ namespace xrlib
 			}
 		}
 
-		// Parse inverse bind matrices if available
-		if ( gltfSkin.inverseBindMatrices.has_value() )
+		// glTF and XrMatrix4x4f both store column-major matrices
+		outSkin->inverseBindMatrices.resize( gltfSkin.joints.size() );
+		for ( auto &matrix : outSkin->inverseBindMatrices )
+			XrMatrix4x4f_CreateIdentity( &matrix );
+
+		if ( gltfSkin.inverseBindMatrices )
 		{
-			const fastgltf::Accessor &accessor = model.accessors[ *gltfSkin.inverseBindMatrices ];
+			const auto &accessor = model.accessors.at( *gltfSkin.inverseBindMatrices );
+			if ( accessor.count != gltfSkin.joints.size() )
+				throw std::runtime_error( "Inverse bind matrix count doesn't match skin joints" );
 
-			size_t numMatrices = accessor.count;
-			outSkin->inverseBindMatrices.resize( numMatrices );
-
-			// Create a mapping from node index to joint index
-			std::unordered_map< uint32_t, uint32_t > nodeToJointIndex;
-			for ( size_t i = 0; i < gltfSkin.joints.size(); ++i )
-			{
-				nodeToJointIndex[ gltfSkin.joints[ i ] ] = i;
-			}
-
-			// Process each joint node
-			for ( size_t i = 0; i < numMatrices; i++ )
-			{
-				uint32_t nodeIndex = gltfSkin.joints[ i ];			 // Get the node index from joints array
-				uint32_t jointIndex = nodeToJointIndex[ nodeIndex ]; // Convert to sequential joint index
-
-				// Get the inverse bind matrix for this joint
-				float mat[ 16 ];
-				const auto matrix = fastgltf::getAccessorElement< fastgltf::math::fmat4x4 >( model, accessor, i );
-				memcpy( mat, matrix.data(), sizeof( mat ) );
-
-				// Manually transpose the matrix (glTF is column-major, we need row-major)
-				XrMatrix4x4f transposed;
-				transposed.m[ 0 ] = mat[ 0 ];
-				transposed.m[ 1 ] = mat[ 4 ];
-				transposed.m[ 2 ] = mat[ 8 ];
-				transposed.m[ 3 ] = mat[ 12 ];
-				transposed.m[ 4 ] = mat[ 1 ];
-				transposed.m[ 5 ] = mat[ 5 ];
-				transposed.m[ 6 ] = mat[ 9 ];
-				transposed.m[ 7 ] = mat[ 13 ];
-				transposed.m[ 8 ] = mat[ 2 ];
-				transposed.m[ 9 ] = mat[ 6 ];
-				transposed.m[ 10 ] = mat[ 10 ];
-				transposed.m[ 11 ] = mat[ 14 ];
-				transposed.m[ 12 ] = mat[ 3 ];
-				transposed.m[ 13 ] = mat[ 7 ];
-				transposed.m[ 14 ] = mat[ 11 ];
-				transposed.m[ 15 ] = mat[ 15 ];
-
-				float pitch, yaw, roll;
-				ExtractEulerAngles( transposed, pitch, yaw, roll );
-
-				// Add correction for coordinate systems
-				XrQuaternionf xRotation {
-					-0.7071067811865476f, // sin(90/2) for X rotation
-					0.0f,
-					0.0f,
-					0.7071067811865476f // cos(90/2)
-				};
-				XrQuaternionf yRotation {
-					0.0f,
-					0.0f,
-					0.7071067811865476f, // sin(90/2) for Y rotation
-					0.7071067811865476f	 // cos(90/2)
-				};
-
-				// Convert matrix to TRS components
-				XrVector3f position, scale;
-				XrQuaternionf rotation;
-
-				XrMatrix4x4f_GetTranslation( &position, &transposed );
-				XrMatrix4x4f_GetRotation( &rotation, &transposed );
-				XrMatrix4x4f_GetScale( &scale, &transposed );
-
-				// Apply correction
-				XrQuaternionf tempRotation;
-				XrQuaternionf_Multiply( &tempRotation, &xRotation, &rotation );
-				XrQuaternionf_Multiply( &rotation, &yRotation, &tempRotation );
-
-				// Rebuild matrix with corrected rotation
-				XrMatrix4x4f_CreateTranslationRotationScale( &outSkin->inverseBindMatrices[ jointIndex ], &position, &rotation, &scale );
-
-				ExtractEulerAngles( outSkin->inverseBindMatrices[ jointIndex ], pitch, yaw, roll );
-
-				// Normalize the matrix (removes additional scaling from gltf file)
-				NormalizeMatrix( outSkin->inverseBindMatrices[ jointIndex ] );
-			}
+			fastgltf::iterateAccessorWithIndex< fastgltf::math::fmat4x4 >( model, accessor, [&]( const auto &matrix, size_t i ) {
+				memcpy( outSkin->inverseBindMatrices[ i ].m, matrix.data(), sizeof( XrMatrix4x4f ) );
+			} );
 		}
-
 	}
 
 	VkFilter CGltf::ConvertMagFilter( int gltfFilter )
