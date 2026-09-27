@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -107,9 +107,12 @@ namespace xrlib
 	struct SGltfModel
 	{
 		fastgltf::Asset asset;
+		std::string error; // Failure detail from LoadFromDisk, empty after a successful load
 		SGltfLoadTimings timings;
 		std::vector< SGltfImage > images;
 	};
+
+	enum class EGltfLoadStage { ReadFile, ParseAsset, ReadImages };
 
 	/// <summary>Loading execution options; decoded pixels and texture settings are unchanged</summary>
 	struct SGltfLoadOptions
@@ -117,6 +120,9 @@ namespace xrlib
 		uint32_t imageDecodeWorkers = 4; // Maximum concurrent image readers/decoders; 1 selects serial decoding
 		bool batchTextureUploads = true; // Submit texture transfers together instead of one image at a time
 		std::string textureDirectory;	 // Prepared KTX2 directory for this asset (filesystem or Android assets); requires one image-N.ktx2 per glTF image
+
+		// Called synchronously on the loading thread, copy any state needed by another thread
+		std::function< void( EGltfLoadStage ) > onProgress;
 	};
 
 	class CGltf
@@ -132,7 +138,7 @@ namespace xrlib
 
 		/// <summary>Loads glTF data and decodes images without uploading to the GPU</summary>
 		/// <param name="outRenderModel">Render model whose instance scales will be set after loading</param>
-		/// <param name="outModel">Receives owned data on success; unchanged on failure</param>
+		/// <param name="outModel">Receives owned data on success, with error details updated on failure</param>
 		/// <param name="sFilename">Path to a glTF/GLB file, or an Android asset path</param>
 		/// <param name="scale">Scale applied to each render model instance</param>
 		/// <returns>True if the model and its images loaded successfully</returns>
@@ -143,6 +149,10 @@ namespace xrlib
 		/// <param name="pModel">Successfully loaded data; must remain alive until this call returns</param>
 		/// <param name="commandPool">Command pool used for texture uploads</param>
 		void ParseModel( CRenderModel *outRenderModel, SGltfModel *pModel, VkCommandPool commandPool );
+
+		// Build an exclusively owned model without queue submissions, safe on a loading worker
+		// Upload every populated texture before binding materials or drawing the model
+		void PrepareModel( CRenderModel *outRenderModel, SGltfModel *pModel );
 
 	  private:
 		CSession *m_pSession = nullptr;
@@ -163,9 +173,11 @@ namespace xrlib
 			std::vector< uint32_t > &indices, 
 			std::vector< SMeshSection > &materialSections );
 
-		void ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model );
-		void ParseTexture( STexture *outTexture, VkCommandPool commandPool, const SGltfModel &model, const fastgltf::Texture &gltfTexture );
+		void ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model, bool deferUploads = false );
+		void ParseTexture( STexture *outTexture, VkCommandPool commandPool, const SGltfModel &model, const fastgltf::Texture &gltfTexture, bool deferUploads = false );
 		void IdentifyTextureTypes( std::vector< STexture > &textures, const fastgltf::Asset &model );
+
+		void ParseModelData( CRenderModel *outRenderModel, SGltfModel *pModel );
 
 		void ParseMaterials( CRenderModel *outRenderModel, const fastgltf::Asset &model );
 		void ParseMaterial( SMaterial *outMaterial, const fastgltf::Asset &model, const fastgltf::Material &gltfMaterial );

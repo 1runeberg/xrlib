@@ -165,6 +165,7 @@ namespace xrlib
 	static bool LoadImages( SGltfModel &outModel, const fs::path &sDirectory, uint32_t unMaxWorkers, const std::string &sTextureDirectory )
 	{
 		outModel.images.resize( outModel.asset.images.size() );
+		std::vector< std::string > errors( outModel.images.size() );
 		auto LoadImage = [ & ]( size_t i )
 		{
 			const auto &image = outModel.asset.images[ i ];
@@ -180,7 +181,8 @@ namespace xrlib
 #endif
 				if ( data.error() != fastgltf::Error::None || !DecodeKtx2( outImage, static_cast< fastgltf::span< std::byte > >( data.get() ) ) )
 				{
-					LogError( XRLIB_NAME, "Invalid or missing prepared KTX2 image: %s", file.string().c_str() );
+					errors[ i ] = "Invalid or missing KTX2 image: " + file.string();
+					LogError( XRLIB_NAME, "%s", errors[ i ].c_str() );
 					return false;
 				}
 				return true;
@@ -213,7 +215,8 @@ namespace xrlib
 				image.data );
 			if ( !bLoaded )
 			{
-				LogError( XRLIB_NAME, "Failed to load glTF image: %s", outImage.name.c_str() );
+				errors[ i ] = "Failed to load glTF image " + std::to_string( i ) + ": " + std::string( outImage.name ) + " " + outImage.uri;
+				LogError( XRLIB_NAME, "%s", errors[ i ].c_str() );
 				return false;
 			}
 			return true;
@@ -224,7 +227,10 @@ namespace xrlib
 		{
 			for ( size_t i = 0; i < outModel.images.size(); ++i )
 				if ( !LoadImage( i ) )
+				{
+					outModel.error = errors[ i ];
 					return false;
+				}
 			return true;
 		}
 
@@ -246,6 +252,14 @@ namespace xrlib
 		bool loaded = true;
 		for ( auto &worker : workers )
 			loaded = worker.get() && loaded;
+
+		for ( const auto &error : errors )
+			if ( !error.empty() )
+			{
+				outModel.error = error;
+				break;
+			}
+
 		return loaded;
 	}
 
@@ -261,13 +275,19 @@ namespace xrlib
 	bool CGltf::LoadFromDisk( CRenderModel *outRenderModel, SGltfModel *outModel, const std::string &sFilename, XrVector3f scale )
 	{
 		const fs::path file( sFilename );
+		if ( outModel ) outModel->error.clear();
+
 		if ( !outRenderModel || !outModel || file.empty() )
 			return false;
 		if ( file.extension() != ".glb" && file.extension() != ".gltf" )
 		{
-			LogError( XRLIB_NAME, "Error: Invalid file format: %s", sFilename.c_str() );
+			outModel->error = "Unsupported model file format: " + sFilename;
+			LogError( XRLIB_NAME, "%s", outModel->error.c_str() );
 			return false;
 		}
+
+		if ( m_options.onProgress )
+			m_options.onProgress( EGltfLoadStage::ReadFile );
 
 		SGltfLoadTimings timings;
 		auto started = std::chrono::steady_clock::now();
@@ -278,33 +298,46 @@ namespace xrlib
 #endif
 		if ( data.error() != fastgltf::Error::None )
 		{
-			LogError( XRLIB_NAME, "Failed to read glTF file: %s (%s)", sFilename.c_str(), fastgltf::getErrorName( data.error() ).data() );
+			outModel->error = "Read " + sFilename + ": " + std::string( fastgltf::getErrorName( data.error() ) );
+			LogError( XRLIB_NAME, "%s", outModel->error.c_str() );
 			return false;
 		}
 
 		timings.diskReadMs = ElapsedMilliseconds( started );
 		started = std::chrono::steady_clock::now();
 
+		if ( m_options.onProgress )
+			m_options.onProgress( EGltfLoadStage::ParseAsset );
+
 		// Keep each parser local so disk loading can run on worker threads
 		fastgltf::Parser parser;
 		auto asset = parser.loadGltf( data.get(), file.parent_path(), fastgltf::Options::LoadExternalBuffers );
 		if ( asset.error() != fastgltf::Error::None )
 		{
-			LogError( XRLIB_NAME, "Failed to parse glTF file: %s (%s)", sFilename.c_str(), fastgltf::getErrorName( asset.error() ).data() );
+			outModel->error = "Parse " + sFilename + ": " + std::string( fastgltf::getErrorName( asset.error() ) );
+			LogError( XRLIB_NAME, "%s", outModel->error.c_str() );
 			return false;
 		}
 
 		SGltfModel model;
 		model.asset = std::move( asset.get() );
-		if ( model.asset.scenes.empty() || fastgltf::validate( model.asset ) != fastgltf::Error::None )
+		const auto validation = fastgltf::validate( model.asset );
+		if ( model.asset.scenes.empty() || validation != fastgltf::Error::None )
 		{
-			LogError( XRLIB_NAME, "Invalid glTF scene: %s", sFilename.c_str() );
+			outModel->error = model.asset.scenes.empty() ? "Model has no scene: " + sFilename : "Validate " + sFilename + ": " + std::string( fastgltf::getErrorName( validation ) );
+			LogError( XRLIB_NAME, "%s", outModel->error.c_str() );
 			return false;
 		}
 		timings.parseMs = ElapsedMilliseconds( started );
 		started = std::chrono::steady_clock::now();
+		if ( m_options.onProgress )
+			m_options.onProgress( EGltfLoadStage::ReadImages );
+
 		if ( !LoadImages( model, file.parent_path(), m_options.imageDecodeWorkers, m_options.textureDirectory ) )
+		{
+			outModel->error = std::move( model.error );
 			return false;
+		}
 		timings.imageDecodeMs = ElapsedMilliseconds( started );
 		model.timings = timings;
 		*outModel = std::move( model );
@@ -320,7 +353,18 @@ namespace xrlib
 		auto started = std::chrono::steady_clock::now();
 		ParseTextures( outRenderModel, commandPool, *pModel );
 		pModel->timings.textureUploadMs = ElapsedMilliseconds( started );
-		started = std::chrono::steady_clock::now();
+		ParseModelData( outRenderModel, pModel );
+	}
+
+	void CGltf::PrepareModel( CRenderModel *outRenderModel, SGltfModel *pModel )
+	{
+		ParseTextures( outRenderModel, VK_NULL_HANDLE, *pModel, true );
+		ParseModelData( outRenderModel, pModel );
+	}
+
+	void CGltf::ParseModelData( CRenderModel *outRenderModel, SGltfModel *pModel )
+	{
+		auto started = std::chrono::steady_clock::now();
 		ParseMaterials( outRenderModel, pModel->asset );
 		ParseSkins( outRenderModel, pModel->asset );
 
@@ -458,7 +502,7 @@ namespace xrlib
 		}
 	}
 
-	void CGltf::ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model )
+	void CGltf::ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model, bool deferUploads )
 	{
 		if ( model.asset.textures.size() < 1 )
 			return;
@@ -468,9 +512,9 @@ namespace xrlib
 		for ( const auto &gltfTexture : model.asset.textures )
 		{
 			outRenderModel->textures.emplace_back();
-			ParseTexture( &outRenderModel->textures.back(), commandPool, model, gltfTexture );
+			ParseTexture( &outRenderModel->textures.back(), commandPool, model, gltfTexture, deferUploads );
 		}
-		if ( m_options.batchTextureUploads )
+		if ( !deferUploads && m_options.batchTextureUploads )
 		{
 			std::vector< vkutils::SImageUpload > uploads;
 			for ( size_t i = firstTexture; i < outRenderModel->textures.size(); ++i )
@@ -483,7 +527,7 @@ namespace xrlib
 		}
 	}
 
-	void CGltf::ParseTexture( STexture *outTexture, VkCommandPool commandPool, const SGltfModel &model, const fastgltf::Texture &gltfTexture )
+	void CGltf::ParseTexture( STexture *outTexture, VkCommandPool commandPool, const SGltfModel &model, const fastgltf::Texture &gltfTexture, bool deferUploads )
 	{
 		// Get the image data
 		if ( !gltfTexture.imageIndex || *gltfTexture.imageIndex >= model.images.size() )
@@ -627,7 +671,7 @@ namespace xrlib
 				VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->srgbView, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, outTexture->samplerConfig.mipLevels ) );
 
 			// Upload image to gpu buffer and transition image for shader reads
-			if ( !m_options.batchTextureUploads )
+			if ( !deferUploads && !m_options.batchTextureUploads )
 			{
 				const vkutils::SImageUpload upload { outTexture->image, outTexture->data, static_cast< uint32_t >( outTexture->width ), static_cast< uint32_t >( outTexture->height ), outTexture->format, outTexture->mips };
 				VK_CHECK_RESULT( vkutils::UploadTextureDataToImages( m_pSession->GetVulkan()->GetVkLogicalDevice(), m_pSession->GetVulkan()->GetVkPhysicalDevice(), commandPool, m_pSession->GetVulkan()->GetVkQueue_Graphics(), { &upload, 1 } ) );

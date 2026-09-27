@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -60,6 +60,35 @@ namespace vkutils
 		uint32_t height;
 		VkFormat format;
 		std::span< const SImageMip > mips {}; // Empty for a single-level image
+	};
+
+
+	// Prepare on a worker with its own pool, then hand off before Submit/Poll
+	// Prepare copies pixels. Keep destination images and the pool alive until destruction
+	// Serialize queue access for Submit. Destruction waits for pending uploads
+	class CImageUpload
+	{
+	  public:
+		CImageUpload() = default;
+		~CImageUpload();
+		CImageUpload( const CImageUpload & ) = delete;
+		CImageUpload &operator=( const CImageUpload & ) = delete;
+
+		VkResult Prepare( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, std::span< const SImageUpload > images );
+		VkResult Submit( VkQueue queue );
+		VkResult Poll();
+		VkResult Wait();
+
+	  private:
+		VkDevice m_device = VK_NULL_HANDLE;
+		VkCommandPool m_pool = VK_NULL_HANDLE;
+		VkBuffer m_buffer = VK_NULL_HANDLE;
+		VkDeviceMemory m_memory = VK_NULL_HANDLE;
+		VkCommandBuffer m_commands = VK_NULL_HANDLE;
+		VkFence m_fence = VK_NULL_HANDLE;
+		bool m_prepared = false;
+		bool m_submitted = false;
+		VkResult m_result = VK_NOT_READY;
 	};
 
 	/// <summary>Uploads 8/16-bit UNORM images with one staging allocation, submission and fence wait</summary>
