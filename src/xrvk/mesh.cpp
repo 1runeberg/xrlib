@@ -12,9 +12,87 @@
 
 
 #include <xrvk/mesh.hpp>
+#include <xrvk/animation.hpp>
 
 namespace xrlib
 {
+
+	void SSkin::UpdateMatrices( const std::vector< XrQuaternionf > &orientation, const std::vector< XrVector3f > &position, XrVector3f scale )
+	{
+		if ( orientation.size() != joints.size() || position.size() != joints.size() )
+			throw std::invalid_argument( "Joint pose count doesn't match skin" );
+
+		std::vector< XrMatrix4x4f > localMatrices( joints.size() );
+		for ( size_t i = 0; i < joints.size(); ++i )
+			XrMatrix4x4f_CreateTranslationRotationScale( &localMatrices[ i ], &position[ i ], &orientation[ i ], &scale );
+
+		UpdateMatrices( localMatrices.data() );
+	}
+
+	void SSkin::UpdateMatrices( const std::vector< XrPosef > &newJointPoses, XrVector3f scale )
+	{
+		std::vector< XrQuaternionf > orientation;
+		std::vector< XrVector3f > position;
+		for ( const auto &pose : newJointPoses )
+		{
+			orientation.push_back( pose.orientation );
+			position.push_back( pose.position );
+		}
+
+		UpdateMatrices( orientation, position, scale );
+	}
+
+	void SSkin::UpdateMatrices( XrMatrix4x4f *localMatrices )
+	{
+		if ( !localMatrices && !joints.empty() )
+			throw std::invalid_argument( "Missing joint matrices" );
+
+		std::vector< bool > isChild( joints.size(), false );
+		for ( const auto &[parent, children] : hierarchy )
+		{
+			if ( parent >= joints.size() )
+				throw std::out_of_range( "Invalid parent joint" );
+
+			for ( uint32_t child : children )
+			{
+				if ( child >= joints.size() || isChild[ child ] )
+					throw std::invalid_argument( "Invalid joint hierarchy" );
+
+				isChild[ child ] = true;
+			}
+		}
+
+		matrices.resize( joints.size() );
+		std::vector< bool > visited( joints.size(), false );
+		std::function< void( uint32_t, const XrMatrix4x4f & ) > UpdateJoint;
+		UpdateJoint = [&]( uint32_t joint, const XrMatrix4x4f &parent ) {
+			if ( visited[ joint ] )
+				throw std::invalid_argument( "Cyclic joint hierarchy" );
+
+			visited[ joint ] = true;
+			XrMatrix4x4f world;
+			XrMatrix4x4f_Multiply( &world, &parent, &localMatrices[ joint ] );
+			if ( joint < inverseBindMatrices.size() )
+				XrMatrix4x4f_Multiply( &matrices[ joint ], &world, &inverseBindMatrices[ joint ] );
+			else
+				matrices[ joint ] = world;
+
+			auto children = hierarchy.find( joint );
+			if ( children != hierarchy.end() )
+				for ( uint32_t child : children->second )
+					UpdateJoint( child, world );
+		};
+
+		XrMatrix4x4f identity;
+		XrMatrix4x4f_CreateIdentity( &identity );
+		for ( size_t i = 0; i < joints.size(); ++i )
+			if ( !isChild[ i ] )
+				UpdateJoint( static_cast< uint32_t >( i ), identity );
+
+		if ( std::find( visited.begin(), visited.end(), false ) != visited.end() )
+			throw std::invalid_argument( "Cyclic joint hierarchy" );
+	}
+
 	CRenderModel::CRenderModel( 
 		CSession *pSession,
 		CRenderInfo *pRenderInfo,
@@ -35,6 +113,8 @@ namespace xrlib
 
 	CRenderModel::~CRenderModel() 
 	{ 
+		if ( m_vkSkinningPool )
+			vkDestroyDescriptorPool( m_pSession->GetVulkan()->GetVkLogicalDevice(), m_vkSkinningPool, nullptr );
 		Reset();
 		DeleteBuffers();
 	}
@@ -49,10 +129,13 @@ namespace xrlib
 				delete m_pVertexBuffer;
 
 			m_pVertexBuffer = new CDeviceBuffer( m_pSession );
+			m_unBufferedVertexCount = 0;
 			VkResult result = InitBuffer( m_pVertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( SMeshVertex ) * vertices.size(), vertices.data() );
 			if ( result != VK_SUCCESS )
 				return result;
 		}
+
+		m_unBufferedVertexCount = vertices.size();
 
 		// Initialize index buffer
 		if ( indices.size() > 0 )
@@ -82,6 +165,81 @@ namespace xrlib
 		if ( bReset )
 			Reset();
 
+		return VK_SUCCESS;
+	}
+
+	VkResult CRenderModel::InitSkinning( VkDescriptorSetLayout layout, const XrMatrix4x4f &modelFromAsset )
+	{
+		if ( !pAnimation || !layout || m_pSkinningBuffer || m_vkSkinningPool )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		pAnimation->GetSkinningVertices( vertices );
+		pAnimation->GetSkinningMatrices( m_vecSkinningMatrices );
+		const VkDeviceSize size = sizeof( XrMatrix4x4f ) * ( 1 + m_vecSkinningMatrices.size() );
+		auto *pVulkan = m_pSession->GetVulkan();
+		const VkDevice device = pVulkan->GetVkLogicalDevice();
+		VkPhysicalDeviceProperties properties;
+		vkGetPhysicalDeviceProperties( pVulkan->GetVkPhysicalDevice(), &properties );
+		if ( size > properties.limits.maxStorageBufferRange )
+			return VK_ERROR_FEATURE_NOT_PRESENT;
+
+		m_pSkinningBuffer = std::make_unique< CDeviceBuffer >( m_pSession );
+		VK_CHECK_RETURN( m_pSkinningBuffer->Init( VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, size ) );
+		VK_CHECK_RETURN( m_pSkinningBuffer->MapMemory() );
+		std::memcpy( m_pSkinningBuffer->GetMappedData(), &modelFromAsset, sizeof( modelFromAsset ) );
+		VK_CHECK_RETURN( UpdateSkinning() );
+
+		VkDescriptorPoolSize poolSize { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 };
+		VkDescriptorPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+		poolInfo.maxSets = 1;
+		poolInfo.poolSizeCount = 1;
+		poolInfo.pPoolSizes = &poolSize;
+		VK_CHECK_RETURN( vkCreateDescriptorPool( device, &poolInfo, nullptr, &m_vkSkinningPool ) );
+
+		VkDescriptorSetAllocateInfo allocation { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+		allocation.descriptorPool = m_vkSkinningPool;
+		allocation.descriptorSetCount = 1;
+		allocation.pSetLayouts = &layout;
+		VK_CHECK_RETURN( vkAllocateDescriptorSets( device, &allocation, &m_vkSkinningSet ) );
+
+		VkDescriptorBufferInfo buffer { m_pSkinningBuffer->GetVkBuffer(), 0, size };
+		VkWriteDescriptorSet descriptor { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		descriptor.dstSet = m_vkSkinningSet;
+		descriptor.dstBinding = 0;
+		descriptor.descriptorCount = 1;
+		descriptor.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		descriptor.pBufferInfo = &buffer;
+		vkUpdateDescriptorSets( device, 1, &descriptor, 0, nullptr );
+		return VK_SUCCESS;
+	}
+
+	VkResult CRenderModel::UpdateSkinning()
+	{
+		if ( !pAnimation || !m_pSkinningBuffer )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		const auto count = m_vecSkinningMatrices.size();
+		pAnimation->GetSkinningMatrices( m_vecSkinningMatrices );
+		if ( m_vecSkinningMatrices.size() != count )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		auto *pData = static_cast< uint8_t * >( m_pSkinningBuffer->GetMappedData() );
+		if ( !pData )
+			return VK_ERROR_MEMORY_MAP_FAILED;
+		std::memcpy( pData + sizeof( XrMatrix4x4f ), m_vecSkinningMatrices.data(), count * sizeof( XrMatrix4x4f ) );
+		return VK_SUCCESS;
+	}
+
+	VkResult CRenderModel::UpdateVertexBuffer()
+	{
+		if ( !m_pVertexBuffer || vertices.size() != m_unBufferedVertexCount )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		const VkResult result = m_pVertexBuffer->MapMemory();
+		if ( result != VK_SUCCESS )
+			return result;
+
+		memcpy( m_pVertexBuffer->GetMappedData(), vertices.data(), sizeof( SMeshVertex ) * vertices.size() );
 		return VK_SUCCESS;
 	}
 
@@ -119,6 +277,9 @@ namespace xrlib
 				vertexDescriptors.data(), 
 				0, nullptr ); // dynamic offsets not supported
 		}
+
+		if ( m_vkSkinningSet )
+			vkCmdBindDescriptorSets( commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderInfo.vecPipelineLayouts[ pipelineLayoutIndex ], 2, 1, &m_vkSkinningSet, 0, nullptr );
 
 		// Bind environment lighting
 		if ( renderInfo.pSceneLighting )

@@ -16,6 +16,7 @@
 #include <xrlib/session.hpp>
 #include <xrvk/buffer.hpp>
 #include <xrvk/mesh.hpp>
+#include <xrvk/animation.hpp>
 
 #include <unordered_map>
 #include <functional>
@@ -164,7 +165,8 @@ namespace xrlib
 			const fastgltf::Node &node,
 			std::vector< SMeshVertex > &vertices, 
 			std::vector< uint32_t > &indices, 
-			std::vector< SMeshSection > &materialSections );
+			std::vector< SMeshSection > &materialSections,
+			std::vector< SAnimationMesh > &meshes );
 
 		void ProcessMesh( 
 			const fastgltf::Asset &model,

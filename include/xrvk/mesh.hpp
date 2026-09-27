@@ -22,12 +22,16 @@
 #include <fstream>
 #include <cfloat>
 #include <functional>
+#include <algorithm>
+#include <stdexcept>
 
 #include <xrvk/renderables.hpp>
 #include <xrvk/texture.hpp>
 
 namespace xrlib
 {
+	class CAnimation;
+
 	// Material texture flags
 	static constexpr uint32_t TEXTURE_BASE_COLOR_BIT = 0x01u;
 	static constexpr uint32_t TEXTURE_METALLIC_ROUGH_BIT = 0x02u;
@@ -141,132 +145,13 @@ namespace xrlib
 		std::vector< XrMatrix4x4f > matrices;
 		int32_t skeleton = -1; // Index of the root node (if defined)
 
-		void UpdateMatrices( const std::vector< XrQuaternionf > &orientation, const std::vector< XrVector3f > &position, XrVector3f scale = { 1.0f, 1.0f, 1.0f } )
-		{
-			matrices.resize( joints.size() );
+		void UpdateMatrices( const std::vector< XrQuaternionf > &orientation, const std::vector< XrVector3f > &position, XrVector3f scale = { 1.f, 1.f, 1.f } );
 
-			std::function< void( uint32_t jointIndex, const XrMatrix4x4f &parentWorldMatrix ) > updateJointHierarchy;
-			updateJointHierarchy = [ & ]( uint32_t jointIndex, const XrMatrix4x4f &parentWorldMatrix )
-			{
-				// Get local transform using the helper function
-				XrMatrix4x4f localMatrix;
-				XrMatrix4x4f_CreateTranslationRotationScale( &localMatrix, &position[ jointIndex ], &orientation[ jointIndex ], &scale );
+		void UpdateMatrices( const std::vector< XrPosef > &newJointPoses, XrVector3f scale = { 1.f, 1.f, 1.f } );
 
-				// Calculate world matrix
-				XrMatrix4x4f worldMatrix;
-				XrMatrix4x4f_Multiply( &worldMatrix, &parentWorldMatrix, &localMatrix );
+		// Joint-local matrices in skin joint order, with non-joint ancestors already included
+		void UpdateMatrices( XrMatrix4x4f *localMatrices );
 
-				// Multiply with inverse bind matrix if it exists
-				if ( jointIndex < inverseBindMatrices.size() )
-				{
-					XrMatrix4x4f finalMatrix;
-					XrMatrix4x4f_Multiply( &finalMatrix, &worldMatrix, &inverseBindMatrices[ jointIndex ] );
-					matrices[ jointIndex ] = finalMatrix;
-				}
-				else
-				{
-					matrices[ jointIndex ] = worldMatrix;
-				}
-
-				// Store the result
-				matrices[ jointIndex ] = worldMatrix;
-
-				// Process children
-				auto childrenIt = hierarchy.find( jointIndex );
-				if ( childrenIt != hierarchy.end() )
-				{
-					for ( uint32_t childIndex : childrenIt->second )
-					{
-						updateJointHierarchy( childIndex, worldMatrix );
-					}
-				}
-			};
-
-			// Start recursion from root(s)
-			if ( skeleton != -1 )
-			{
-				XrMatrix4x4f identityMatrix;
-				XrMatrix4x4f_CreateIdentity( &identityMatrix );
-				updateJointHierarchy( skeleton, identityMatrix );
-			}
-			else
-			{
-				std::vector< bool > isChild( joints.size(), false );
-				for ( const auto &[ parentIdx, children ] : hierarchy )
-				{
-					for ( uint32_t childIdx : children )
-					{
-						isChild[ childIdx ] = true;
-					}
-				}
-
-				XrMatrix4x4f identityMatrix;
-				XrMatrix4x4f_CreateIdentity( &identityMatrix );
-				for ( size_t i = 0; i < joints.size(); ++i )
-				{
-					if ( !isChild[ i ] )
-					{
-						updateJointHierarchy( i, identityMatrix );
-					}
-				}
-			}
-		}
-
-		void UpdateMatrices( const std::vector< XrPosef > &newJointPoses, XrVector3f scale = { 1.0f, 1.0f, 1.0f } )
-		{
-			std::vector< XrQuaternionf > orientation;
-			std::vector< XrVector3f > position;
-
-			for ( auto &pose : newJointPoses )
-			{
-				orientation.push_back( pose.orientation );
-				position.push_back( pose.position );
-			}
-
-			UpdateMatrices( orientation, position, scale );
-		}
-
-		void UpdateMatrices( XrMatrix4x4f *localMatrices )
-		{
-			matrices.resize( joints.size() );
-
-			// Recursive lambda that uses the existing TRS matrices in localMatrices
-			std::function< void( uint32_t jointIndex, const XrMatrix4x4f &parentWorldMatrix ) > updateJointHierarchy;
-			updateJointHierarchy = [ & ]( uint32_t jointIndex, const XrMatrix4x4f &parentWorldMatrix )
-			{
-				// The local transform is already in localMatrices[jointIndex]
-				const XrMatrix4x4f &localMatrix = localMatrices[ jointIndex ];
-
-				// Calculate world matrix
-				XrMatrix4x4f worldMatrix;
-				XrMatrix4x4f_Multiply( &worldMatrix, &parentWorldMatrix, &localMatrix );
-
-				// Multiply with inverse bind matrix if it exists
-				if ( jointIndex < inverseBindMatrices.size() )
-				{
-					XrMatrix4x4f_Multiply( &matrices[ jointIndex ], &worldMatrix, &inverseBindMatrices[ jointIndex ] );
-				}
-				else
-				{
-					matrices[ jointIndex ] = worldMatrix;
-				}
-
-				// Process children using the calculated world matrix
-				auto childrenIt = hierarchy.find( jointIndex );
-				if ( childrenIt != hierarchy.end() )
-				{
-					for ( uint32_t childIndex : childrenIt->second )
-					{
-						updateJointHierarchy( childIndex, worldMatrix );
-					}
-				}
-			};
-
-			// Start recursion from root with identity matrix
-			XrMatrix4x4f identityMatrix;
-			XrMatrix4x4f_CreateIdentity( &identityMatrix );
-			updateJointHierarchy( 0, identityMatrix );
-		}
 	};
 
 
@@ -301,6 +186,16 @@ namespace xrlib
 		uint32_t LoadMaterial( CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager* pTextureManager );
 		uint32_t LoadMaterial( std::vector< SMaterialUBO* > &outMaterialData, CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager );
 
+		// Call after InitBuffers and completion of earlier GPU reads, without changing the vertex count
+		VkResult UpdateVertexBuffer();
+
+		// Call before InitBuffers on an exclusively owned model with pAnimation
+		// Requires the set 2 layout from a skinning-enabled PBR pipeline
+		VkResult InitSkinning( VkDescriptorSetLayout layout, const XrMatrix4x4f &modelFromAsset );
+
+		// Call after sampling and completion of earlier GPU reads of this model
+		VkResult UpdateSkinning();
+
 		// Mesh data
 		const VkDeviceSize vertexOffsets[ 1 ] = { 0 };
 
@@ -310,9 +205,18 @@ namespace xrlib
 		std::vector< STexture > textures;
 		std::vector< SMaterial > materials;
 		std::vector< SSkin > skins;
+
+		// Each render model owns its animation pose, GPU instances share that pose
+		std::unique_ptr< CAnimation > pAnimation;
 		std::vector< SMeshSection > materialSections;
 
 	  private:
+
+		size_t m_unBufferedVertexCount = 0;
+		std::unique_ptr< CDeviceBuffer > m_pSkinningBuffer;
+		std::vector< XrMatrix4x4f > m_vecSkinningMatrices;
+		VkDescriptorPool m_vkSkinningPool = VK_NULL_HANDLE;
+		VkDescriptorSet m_vkSkinningSet = VK_NULL_HANDLE;
 
 		// Interfaces
 		void DeleteBuffers() override;

@@ -1448,9 +1448,13 @@ namespace xrlib
 		VkRenderPass vkRenderPass, 
 		std::string sVertexShaderFilename, 
 		std::string sFragmentShaderFilename,
-		bool bCreateAsMainPBRPipeline )
+		bool bCreateAsMainPBRPipeline,
+		bool bEnableSkinning )
 	{
 		assert( pRenderInfo && unPbrDescriptorPoolCount > 0 );
+
+		if ( bEnableSkinning && !bCreateAsMainPBRPipeline )
+			return VK_ERROR_INITIALIZATION_FAILED;
 
 		SShaderSet *pShaderSet = new SShaderSet( sVertexShaderFilename, sFragmentShaderFilename );
 		SetupPBRVertexAttributes( *pShaderSet );
@@ -1474,6 +1478,13 @@ namespace xrlib
 		}
 
 		std::vector< VkDescriptorSetLayout > layouts = { pRenderInfo->pDescriptors->GetDescriptorSetLayout( outPipelines.pbrFragmentDescriptorLayout ), pRenderInfo->pDescriptors->GetDescriptorSetLayout( pRenderInfo->lightingLayoutId ) };
+
+		if ( bEnableSkinning )
+		{
+			const std::vector< SDescriptorBinding > bindings { { 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT } };
+			VK_CHECK_RETURN( pRenderInfo->pDescriptors->CreateDescriptorSetLayout( outPipelines.skinningDescriptorLayout, bindings ) );
+			layouts.push_back( pRenderInfo->pDescriptors->GetDescriptorSetLayout( outPipelines.skinningDescriptorLayout ) );
+		}
 
 		SPipelineCreationParams params { 
 			.renderPass = vkRenderPass, 

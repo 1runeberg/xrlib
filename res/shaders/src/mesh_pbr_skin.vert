@@ -3,4 +3,5 @@
 // SPDX-License-Identifier: Apache-2.0
 #version 450
 #extension GL_EXT_multiview : require
+#define XRVK_SKINNED
 #include "mesh_pbr_vertex.glsl"
