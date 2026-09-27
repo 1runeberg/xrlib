@@ -210,34 +210,33 @@ namespace vkutils
 		vkFreeMemory( device, stagingBufferMemory, nullptr );
 	}
 
-	VkResult UploadTextureDataToImages( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue graphicsQueue, std::span< const SImageUpload > images )
-	{
-		if ( images.empty() )
-			return VK_SUCCESS;
 
-		struct SUploadResources
+	CImageUpload::~CImageUpload()
+	{
+		if ( m_submitted && m_result == VK_NOT_READY )
+			Wait();
+		if ( m_fence )
+			vkDestroyFence( m_device, m_fence, nullptr );
+		if ( m_commands )
+			vkFreeCommandBuffers( m_device, m_pool, 1, &m_commands );
+		if ( m_buffer )
+			vkDestroyBuffer( m_device, m_buffer, nullptr );
+		if ( m_memory )
+			vkFreeMemory( m_device, m_memory, nullptr );
+	}
+
+	VkResult CImageUpload::Prepare( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, std::span< const SImageUpload > images )
+	{
+		if ( m_device || !device || !commandPool )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		m_device = device;
+		m_pool = commandPool;
+		if ( images.empty() )
 		{
-			VkDevice device;
-			VkCommandPool pool;
-			VkBuffer buffer = VK_NULL_HANDLE;
-			VkDeviceMemory memory = VK_NULL_HANDLE;
-			VkCommandBuffer commands = VK_NULL_HANDLE;
-			VkFence fence = VK_NULL_HANDLE;
-			bool submitted = false;
-			~SUploadResources()
-			{
-				if ( submitted )
-					vkWaitForFences( device, 1, &fence, VK_TRUE, UINT64_MAX );
-				if ( fence )
-					vkDestroyFence( device, fence, nullptr );
-				if ( commands )
-					vkFreeCommandBuffers( device, pool, 1, &commands );
-				if ( buffer )
-					vkDestroyBuffer( device, buffer, nullptr );
-				if ( memory )
-					vkFreeMemory( device, memory, nullptr );
-			}
-		} resources { device, commandPool };
+			m_prepared = true;
+			return VK_SUCCESS;
+		}
 
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties( physicalDevice, &properties );
@@ -317,33 +316,33 @@ namespace vkutils
 		bufferInfo.size = size;
 		bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		VK_CHECK_RETURN( vkCreateBuffer( device, &bufferInfo, nullptr, &resources.buffer ) );
+		VK_CHECK_RETURN( vkCreateBuffer( device, &bufferInfo, nullptr, &m_buffer ) );
 
 		VkMemoryRequirements requirements;
-		vkGetBufferMemoryRequirements( device, resources.buffer, &requirements );
+		vkGetBufferMemoryRequirements( device, m_buffer, &requirements );
 
 		VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
 		allocation.allocationSize = requirements.size;
 		allocation.memoryTypeIndex = FindMemoryType( physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );
-		VK_CHECK_RETURN( vkAllocateMemory( device, &allocation, nullptr, &resources.memory ) );
-		VK_CHECK_RETURN( vkBindBufferMemory( device, resources.buffer, resources.memory, 0 ) );
+		VK_CHECK_RETURN( vkAllocateMemory( device, &allocation, nullptr, &m_memory ) );
+		VK_CHECK_RETURN( vkBindBufferMemory( device, m_buffer, m_memory, 0 ) );
 
 		void *mapped = nullptr;
-		VK_CHECK_RETURN( vkMapMemory( device, resources.memory, 0, size, 0, &mapped ) );
+		VK_CHECK_RETURN( vkMapMemory( device, m_memory, 0, size, 0, &mapped ) );
 
 		for ( size_t i = 0; i < images.size(); ++i )
 			std::memcpy( static_cast< uint8_t * >( mapped ) + offsets[ i ], images[ i ].data.data(), images[ i ].data.size() );
-		vkUnmapMemory( device, resources.memory );
+		vkUnmapMemory( device, m_memory );
 
 		VkCommandBufferAllocateInfo commandInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
 		commandInfo.commandPool = commandPool;
 		commandInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		commandInfo.commandBufferCount = 1;
-		VK_CHECK_RETURN( vkAllocateCommandBuffers( device, &commandInfo, &resources.commands ) );
+		VK_CHECK_RETURN( vkAllocateCommandBuffers( device, &commandInfo, &m_commands ) );
 
 		VkCommandBufferBeginInfo begin { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-		VK_CHECK_RETURN( vkBeginCommandBuffer( resources.commands, &begin ) );
+		VK_CHECK_RETURN( vkBeginCommandBuffer( m_commands, &begin ) );
 
 		for ( size_t i = 0; i < images.size(); ++i )
 		{
@@ -355,7 +354,7 @@ namespace vkutils
 			barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			vkCmdPipelineBarrier( resources.commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier );
+			vkCmdPipelineBarrier( m_commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier );
 
 			std::vector< VkBufferImageCopy > copies( barrier.subresourceRange.levelCount );
 			uint32_t width = images[ i ].width, height = images[ i ].height;
@@ -371,30 +370,73 @@ namespace vkutils
 				height = ( std::max )( 1u, height / 2 );
 			}
 
-			vkCmdCopyBufferToImage( resources.commands, resources.buffer, images[ i ].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast< uint32_t >( copies.size() ), copies.data() );
+			vkCmdCopyBufferToImage( m_commands, m_buffer, images[ i ].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast< uint32_t >( copies.size() ), copies.data() );
 
 			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-			vkCmdPipelineBarrier( resources.commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier );
+			vkCmdPipelineBarrier( m_commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier );
 		}
 
-		VK_CHECK_RETURN( vkEndCommandBuffer( resources.commands ) );
+		VK_CHECK_RETURN( vkEndCommandBuffer( m_commands ) );
 
 		VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-		VK_CHECK_RETURN( vkCreateFence( device, &fenceInfo, nullptr, &resources.fence ) );
+		VK_CHECK_RETURN( vkCreateFence( device, &fenceInfo, nullptr, &m_fence ) );
 
-		VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-		submit.commandBufferCount = 1;
-		submit.pCommandBuffers = &resources.commands;
-		VK_CHECK_RETURN( vkQueueSubmit( graphicsQueue, 1, &submit, resources.fence ) );
-		resources.submitted = true;
+		m_prepared = true;
+		return VK_SUCCESS;
+	}
 
-		const auto result = vkWaitForFences( device, 1, &resources.fence, VK_TRUE, UINT64_MAX );
-		resources.submitted = false;
+	VkResult CImageUpload::Submit( VkQueue queue )
+	{
+		if ( !m_prepared || m_submitted )
+			return VK_ERROR_INITIALIZATION_FAILED;
 
+		if ( m_commands )
+		{
+			VkSubmitInfo submit { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+			submit.commandBufferCount = 1;
+			submit.pCommandBuffers = &m_commands;
+			VK_CHECK_RETURN( vkQueueSubmit( queue, 1, &submit, m_fence ) );
+		}
+
+		m_submitted = true;
+		m_result = m_commands ? VK_NOT_READY : VK_SUCCESS;
+		return VK_SUCCESS;
+	}
+
+	VkResult CImageUpload::Poll()
+	{
+		if ( !m_submitted || m_result != VK_NOT_READY )
+			return m_result;
+
+		const auto result = vkGetFenceStatus( m_device, m_fence );
+		if ( result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST )
+			m_result = result;
 		return result;
+	}
+
+	VkResult CImageUpload::Wait()
+	{
+		if ( !m_submitted || m_result != VK_NOT_READY )
+			return m_result;
+
+		const auto result = vkWaitForFences( m_device, 1, &m_fence, VK_TRUE, UINT64_MAX );
+		if ( result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST )
+			m_result = result;
+		return result;
+	}
+
+	VkResult UploadTextureDataToImages( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue graphicsQueue, std::span< const SImageUpload > images )
+	{
+		if ( images.empty() )
+			return VK_SUCCESS;
+
+		CImageUpload upload;
+		VK_CHECK_RETURN( upload.Prepare( device, physicalDevice, commandPool, images ) );
+		VK_CHECK_RETURN( upload.Submit( graphicsQueue ) );
+		return upload.Wait();
 	}
 
 	void TransitionImageLayout( 
