@@ -190,7 +190,7 @@ namespace xrlib
 		VkResult UpdateVertexBuffer();
 
 		// Call before InitBuffers on an exclusively owned model with pAnimation
-		// Requires the set 2 layout from a skinning-enabled PBR pipeline
+		// Includes morph targets and requires the set 2 layout from a skinning-enabled PBR pipeline
 		VkResult InitSkinning( VkDescriptorSetLayout layout, const XrMatrix4x4f &modelFromAsset );
 
 		// Call after sampling and completion of earlier GPU reads of this model
@@ -214,6 +214,10 @@ namespace xrlib
 
 		size_t m_unBufferedVertexCount = 0;
 		std::unique_ptr< CDeviceBuffer > m_pSkinningBuffer;
+		std::unique_ptr< CDeviceBuffer > m_pMorphVertexBuffer;
+		std::unique_ptr< CDeviceBuffer > m_pMorphDeltaBuffer;
+		std::unique_ptr< CDeviceBuffer > m_pMorphWeightBuffer;
+		size_t m_unMorphWeightCount = 0;
 		std::vector< XrMatrix4x4f > m_vecSkinningMatrices;
 		VkDescriptorPool m_vkSkinningPool = VK_NULL_HANDLE;
 		VkDescriptorSet m_vkSkinningSet = VK_NULL_HANDLE;

@@ -1494,7 +1494,11 @@ namespace xrlib
 
 		if ( bEnableSkinning )
 		{
-			const std::vector< SDescriptorBinding > bindings { { 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT } };
+			const std::vector< SDescriptorBinding > bindings {
+				{ 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT },
+				{ 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT },
+				{ 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT },
+				{ 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT } };
 			VK_CHECK_RETURN( pRenderInfo->pDescriptors->CreateDescriptorSetLayout( outPipelines.skinningDescriptorLayout, bindings ) );
 			layouts.push_back( pRenderInfo->pDescriptors->GetDescriptorSetLayout( outPipelines.skinningDescriptorLayout ) );
 		}

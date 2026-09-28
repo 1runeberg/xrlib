@@ -168,12 +168,14 @@ namespace xrlib
 			std::vector< SMeshSection > &materialSections,
 			std::vector< SAnimationMesh > &meshes );
 
-		void ProcessMesh( 
+		void ProcessMesh(
 			const fastgltf::Asset &model,
 			const fastgltf::Mesh &mesh,
-			std::vector< SMeshVertex > &vertices, 
-			std::vector< uint32_t > &indices, 
-			std::vector< SMeshSection > &materialSections );
+			std::vector< SMeshVertex > &vertices,
+			std::vector< uint32_t > &indices,
+			std::vector< SMeshSection > &materialSections,
+			std::vector< SAnimationMesh > *pMeshes = nullptr,
+			size_t nodeIndex = SIZE_MAX );
 
 		void ParseTextures( CRenderModel *outRenderModel, VkCommandPool commandPool, const SGltfModel &model, bool deferUploads = false );
 		void ParseTexture( STexture *outTexture, VkCommandPool commandPool, const SGltfModel &model, const fastgltf::Texture &gltfTexture, bool deferUploads = false );
