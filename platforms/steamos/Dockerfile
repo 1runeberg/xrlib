@@ -29,6 +29,7 @@ RUN test "$(uname -m)" = aarch64 \
         -DCMAKE_CXX_COMPILER="${CPP_COMPILER}" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
         -DBUILD_SHADERS=OFF \
+        -DBUILD_XRVK_TOOLS=OFF \
         -DBUILD_AS_STATIC="${BUILD_AS_STATIC}" \
         -DENABLE_XRVK="${ENABLE_XRVK}" \
         -DXRLIB_LIB_OUT=/output/lib \

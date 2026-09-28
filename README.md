@@ -58,6 +58,7 @@ The following CMake options are available:
     - `BUILD_AS_STATIC`: Build as static library (default: OFF)
     - `BUILD_SHADERS`: Build shaders in resource directory (default: ON)
     - `ENABLE_XRVK`: Compile xrvk - PBR render module (default: ON)
+    - `BUILD_XRVK_TOOLS`: Build `xrvk-tools`, the host asset preprocessing tool in `tools/xrvk`, on desktop (default: ON)
 
 #### Debug Options (Desktop only)
     - `ENABLE_RENDERDOC`: Enable RenderDoc for render debugging (default: ON)
