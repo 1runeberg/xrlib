@@ -155,6 +155,16 @@ namespace xrlib
 
 	};
 
+	class CRenderModel;
+
+	struct SMaterialDraw
+	{
+		CRenderModel *pModel;
+		uint32_t section;
+		uint32_t instance;
+		float depth;
+		bool blend;
+	};
 
 	class CRenderModel : public CRenderable
 	{
@@ -183,6 +193,8 @@ namespace xrlib
 		void Reset() override;
 		VkResult InitBuffers( bool bReset = false ) override;
 		void Draw( const VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo ) override;
+		void CollectDraws( std::vector< SMaterialDraw > &outDraws, const CRenderInfo &renderInfo );
+		void DrawSection( VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo, uint32_t unSection, uint32_t unInstance );
 
 		uint32_t LoadMaterial( CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager* pTextureManager );
 		uint32_t LoadMaterial( std::vector< SMaterialUBO* > &outMaterialData, CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager );
@@ -212,8 +224,27 @@ namespace xrlib
 		std::vector< SMeshSection > materialSections;
 
 	  private:
+		struct SSectionBounds
+		{
+			XrVector3f lower {};
+			XrVector3f upper {};
+			std::vector< uint32_t > joints;
+
+			struct SMorphBounds
+			{
+				uint32_t weight;
+				XrVector3f lower {};
+				XrVector3f upper {};
+			};
+			std::vector< SMorphBounds > morphs;
+		};
+
+		void UpdateSectionBounds();
+		XrVector3f GetSectionCenter( uint32_t unSection ) const;
+		std::vector< SSectionBounds > m_vecSectionBounds;
 
 		size_t m_unBufferedVertexCount = 0;
+		XrMatrix4x4f m_modelFromAsset {};
 		std::unique_ptr< CDeviceBuffer > m_pSkinningBuffer;
 		std::unique_ptr< CDeviceBuffer > m_pMorphVertexBuffer;
 		std::unique_ptr< CDeviceBuffer > m_pMorphDeltaBuffer;

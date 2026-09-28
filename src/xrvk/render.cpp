@@ -1510,12 +1510,55 @@ namespace xrlib
 			.subpassIndex = static_cast< uint32_t >( m_bUseVisMask ? 2 : 0 ) 
 		};
 
-		return CreateBasePipeline( 
-			pRenderInfo->vecPipelineLayouts[ outPipelines.pbrLayout ], 
-			pRenderInfo->vecGraphicsPipelines[ outPipelineIndex ], 
-			pShaderSet, 
-			params, 
-			layouts );
+		std::unique_ptr< SShaderSet > shaders( pShaderSet );
+		auto &layout = pRenderInfo->vecPipelineLayouts[ outPipelines.pbrLayout ];
+		if ( layout == VK_NULL_HANDLE )
+		{
+			std::vector< VkPushConstantRange > ranges { GetEyeMatricesPushConstant() };
+			auto layoutCI = GeneratePipelineLayoutCI( ranges, layouts );
+			VK_CHECK_RETURN( vkCreatePipelineLayout( GetLogicalDevice(), &layoutCI, nullptr, &layout ) );
+		}
+
+		std::array< uint32_t, 8 > variants {};
+		for ( uint32_t i = 0; i < variants.size(); ++i )
+		{
+			variants[ i ] = i == 0 ? outPipelineIndex : pRenderInfo->AddNewPipeline();
+			auto state = CreateDefaultPipelineState( shaders->vertexBindings, shaders->vertexAttributes, GetTextureWidth(), GetTextureHeight() );
+			ConfigureDepthStencil( state.depthStencil, params.useVisMask, params.depthFormat );
+			state.rasterization.cullMode = ( i & 2 ) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+			state.rasterization.frontFace = ( i & 4 ) ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
+			if ( i & 1 )
+			{
+				state.depthStencil.depthWriteEnable = VK_FALSE;
+				auto &blend = state.colorBlendAttachments.front();
+				blend.blendEnable = VK_TRUE;
+				blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+				blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				blend.colorBlendOp = VK_BLEND_OP_ADD;
+				blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				blend.alphaBlendOp = VK_BLEND_OP_ADD;
+			}
+
+			VK_CHECK_RETURN( CreateGraphicsPipeline(
+				layout,
+				pRenderInfo->vecGraphicsPipelines[ variants[ i ] ],
+				vkRenderPass,
+				shaders->stages,
+				&state.vertexInput,
+				&state.assembly,
+				nullptr,
+				&state.viewport,
+				&state.rasterization,
+				&state.multisample,
+				&state.depthStencil,
+				&state.colorBlend,
+				&state.dynamicState,
+				VK_NULL_HANDLE,
+				params.subpassIndex ) );
+		}
+		pRenderInfo->materialPipelines[ outPipelineIndex ] = variants;
+		return VK_SUCCESS;
 	}
 
 	VkResult CStereoRender::CreateGraphicsPipeline_CustomPBR(
@@ -2036,13 +2079,28 @@ namespace xrlib
 						return FailGPU( gpuResult );
 				}
 
-				//  Main rendering subpass: Draw render assets
-				for ( auto &renderable : pRenderInfo->vecRenderables )
+				// Opaque geometry first, then transparent sections across models and instances
+				std::vector< SMaterialDraw > draws;
+				std::vector< CRenderable * > customDraws;
+				const auto commands = GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer;
+				for ( auto *renderable : pRenderInfo->vecRenderables )
 				{
-					if ( renderable->isVisible )
-						renderable->Draw( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, *pRenderInfo );
+					if ( !renderable->isVisible )
+						continue;
+					auto *model = dynamic_cast< CRenderModel * >( renderable );
+					if ( model && !model->materialSections.empty() && pRenderInfo->materialPipelines.contains( model->graphicsPipelineIndex ) )
+						model->CollectDraws( draws, *pRenderInfo );
+					else
+						customDraws.push_back( renderable );
 				}
-				
+				std::stable_sort( draws.begin(), draws.end(), []( const auto &a, const auto &b ) { return a.blend != b.blend ? !a.blend : ( a.blend && a.depth > b.depth ); } );
+				for ( const auto &draw : draws )
+					draw.pModel->DrawSection( commands, *pRenderInfo, draw.section, draw.instance );
+
+				// Caller-defined pipelines retain their ordering after the material passes
+				for ( auto *renderable : customDraws )
+					renderable->Draw( commands, *pRenderInfo );
+
 				// Submit draw calls to gpu - this will also clear the staging buffers (if any)
 				gpuResult = SubmitDraw( state.unCurrentSwapchainImage_Color, state.vecStagingBuffers );
 				if ( gpuResult != VK_SUCCESS )

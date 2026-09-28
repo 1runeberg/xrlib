@@ -16,10 +16,11 @@
 #include <filesystem>
 #include <fstream>
 
-#include <vector>
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <unordered_map>
+#include <vector>
 
 #include <xrvk/buffer.hpp>
 #include <xrvk/descriptors.hpp>
@@ -146,6 +147,9 @@ namespace xrlib
 		// For renderables
 		std::vector< VkPipelineLayout > vecPipelineLayouts;
 		std::vector< VkPipeline > vecGraphicsPipelines;
+
+		// Variants indexed by blend, double-sided and mirrored-instance bits
+		std::unordered_map< uint32_t, std::array< uint32_t, 8 > > materialPipelines;
 		std::vector< CRenderable * > vecRenderables;
 
 		uint16_t AddNewLayout( VkPipelineLayout layout = VK_NULL_HANDLE );
