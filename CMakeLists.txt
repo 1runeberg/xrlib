@@ -48,6 +48,7 @@ option(BUILD_SHADERS "Build shaders in resource directory" ON)
 option(ENABLE_XRVK "Compile xrvk - pbr render module" ON)
 option(ENABLE_RENDERDOC "Enable renderdoc for render debugs" ON) 
 option(ENABLE_VULKAN_DEBUG "Enable vulkan debugging" OFF) 
+option(BUILD_XRVK_TOOLS "Build xrvk host asset tools on desktop" ON)
 
 # For windows, we need to override openxr's resource script, so define the rc files here which will be used during binary pre-build
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
@@ -250,6 +251,11 @@ endfunction()
 
 if(ENABLE_XRVK)
     add_gltf_dependencies()
+endif()
+
+# Asset tools run on the build host, so device builds skip them
+if(ENABLE_XRVK AND BUILD_XRVK_TOOLS AND NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+    add_subdirectory(tools/xrvk)
 endif()
 
 
