@@ -466,6 +466,7 @@ namespace xrlib
 			{
 				ReadAttribute.operator()< fastgltf::math::fvec4 >( "COLOR_0", []( SMeshVertex &vertex, const auto &value ) {
 					vertex.color0 = { value[ 0 ], value[ 1 ], value[ 2 ] };
+					vertex.colorAlpha = value[ 3 ];
 				} );
 			}
 			else

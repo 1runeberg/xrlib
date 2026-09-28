@@ -1749,6 +1749,7 @@ namespace xrlib
 			{ 3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof( SMeshVertex, uv0 ) },
 			{ 4, 0, VK_FORMAT_R32G32_SFLOAT, offsetof( SMeshVertex, uv1 ) },
 			{ 5, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof( SMeshVertex, color0 ) },
+			{ 12, 0, VK_FORMAT_R32_SFLOAT, offsetof( SMeshVertex, colorAlpha ) },
 			{ 6, 0, VK_FORMAT_R32G32B32A32_SINT, offsetof( SMeshVertex, joints ) },
 			{ 7, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof( SMeshVertex, weights ) },
 			{ 8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0 },

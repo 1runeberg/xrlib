@@ -9,6 +9,7 @@ layout(location=2) in vec4 inTangent;
 layout(location=3) in vec2 inTexCoord0;
 layout(location=4) in vec2 inTexCoord1;
 layout(location=5) in vec3 inColor0;
+layout(location=12) in float inColorAlpha;
 layout(location=8) in vec4 model0;
 layout(location=9) in vec4 model1;
 layout(location=10) in vec4 model2;
@@ -19,7 +20,7 @@ layout(location=2) out vec3 outNormal;
 layout(location=3) out vec3 outTangent;
 layout(location=4) out vec3 outBitangent;
 layout(location=5) out vec3 outViewDirection;
-layout(location=6) out vec3 outColor;
+layout(location=6) out vec4 outColor;
 layout(location=7) out vec2 outUV1;
 #ifdef XRVK_SKINNED
 layout(location=6) in ivec4 inJoints;
@@ -62,6 +63,6 @@ void main() {
     outViewDirection = scene.eyePositions[gl_ViewIndex].xyz - world.xyz;
     outUV = inTexCoord0;
     outUV1 = inTexCoord1;
-    outColor = inColor0;
+    outColor = vec4(inColor0, inColorAlpha);
     gl_Position = pushConsts.eyeVPs[gl_ViewIndex] * world;
 }
