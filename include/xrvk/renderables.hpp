@@ -86,6 +86,7 @@ namespace xrlib
 		virtual VkResult InitBuffers( bool bReset = false ) = 0;
 		virtual void Draw( const VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo  ) = 0;
 
+		// Earlier GPU reads must have completed, allocation failure leaves instances unchanged
 		uint32_t AddInstance( uint32_t unCount, XrVector3f scale = { 1.f, 1.f, 1.f } );
 
 		VkResult InitBuffer(
@@ -208,7 +209,7 @@ namespace xrlib
 			{
 				for ( CDeviceBuffer *pStagingBuffer : vecStagingBuffers )
 				{
-					if ( pStagingBuffer == nullptr )
+					if ( pStagingBuffer != nullptr )
 						delete pStagingBuffer;
 				}
 

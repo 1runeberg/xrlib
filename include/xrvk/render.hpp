@@ -29,13 +29,36 @@ namespace xrlib
 		{
 			AAsset *file = AAssetManager_open( assetManager, sFilename.c_str(), AASSET_MODE_BUFFER );
 			if ( !file )
-				LogError( "", "Unable to load binary file: %s", sFilename.c_str() );
+				throw std::runtime_error( "Couldn't open asset: " + sFilename );
 
-			size_t fileLength = AAsset_getLength( file );
-			char *fileContent = new char[ fileLength ];
-			AAsset_read( file, fileContent, fileLength );
+			const auto length = AAsset_getLength64( file );
+			if ( length <= 0 || uint64_t( length ) > SIZE_MAX )
+			{
+				AAsset_close( file );
+				throw std::runtime_error( "Invalid asset size: " + sFilename );
+			}
+			std::vector< char > vec;
+			try
+			{
+				vec.resize( size_t( length ) );
+			}
+			catch ( ... )
+			{
+				AAsset_close( file );
+				throw;
+			}
+			size_t offset = 0;
+			while ( offset < vec.size() )
+			{
+				const int count = AAsset_read( file, vec.data() + offset, std::min( vec.size() - offset, size_t( INT32_MAX ) ) );
+				if ( count <= 0 )
+				{
+					AAsset_close( file );
+					throw std::runtime_error( "Couldn't read asset: " + sFilename );
+				}
+				offset += size_t( count );
+			}
 			AAsset_close( file );
-			std::vector< char > vec( fileContent, fileContent + fileLength );
 
 			return vec;
 		}
@@ -57,8 +80,9 @@ namespace xrlib
 			file.seekg( 0 );
 			file.read( buffer.data(), fileSize );
 
+			if ( !file || fileSize == 0 )
+				throw std::runtime_error( "Couldn't read file: " + sFilename );
 			file.close();
-			assert( fileSize > 0 );
 			return buffer;
 		}
 	#endif
@@ -217,6 +241,10 @@ namespace xrlib
 			 VkImageView vkDepthImageView = VK_NULL_HANDLE;
 
 			 VkFramebuffer vkFrameBuffer = VK_NULL_HANDLE;
+
+			 // One framebuffer for each independently acquired depth image
+			 std::vector< VkImageView > depthViews;
+			 std::vector< VkFramebuffer > framebuffers;
 
 			 VkCommandBuffer vkRenderCommandBuffer = VK_NULL_HANDLE;
 			 VkFence vkRenderCommandFence = VK_NULL_HANDLE;
@@ -449,39 +477,32 @@ namespace xrlib
 
 		VkResult AddRenderPass( VkRenderPassCreateInfo2 *renderPassCI, VkAllocationCallbacks *pAllocator = nullptr );
 
-		/** @brief Render a complete XR frame and report wait/begin/end failures.
-		 * @param[in] renderPass Renderer-owned pass compatible with its targets.
-		 * @param[in] pRenderInfo Borrowed scene and per-frame state.
-		 * @param[in] stencils Optional borrowed visibility-mask geometry.
-		 * @return Frame transport result; failure must not be counted as a presented frame.
-		 */
+		// Failures include frame transport, image acquisition and GPU submission
+		// A failed renderer must be torn down rather than reused
 		XrResult RenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils );
 		bool StartRenderFrame( CRenderInfo *pRenderInfo );
 
-		/** @brief Render and end a frame previously begun by StartRenderFrame.
-		 * @param[in] renderPass Renderer-owned pass compatible with its targets.
-		 * @param[in] pRenderInfo Borrowed scene and begun-frame state.
-		 * @param[in] stencils Optional borrowed visibility-mask geometry.
-		 * @return The xrEndFrame result, including validation or native presentation failure.
-		 */
+		// End a frame begun by StartRenderFrame, failed frames submit no projection layers
 		XrResult EndRenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils );
 
-		void BeginDraw(
+		VkResult BeginDraw(
 			const uint32_t unSwpachainImageIndex,
 			std::vector< VkClearValue > &vecClearValues,
 			const bool startCommandBufferRecording = true,
 			const VkRenderPass renderpass = VK_NULL_HANDLE,
-			const VkSubpassContents subpass = VK_SUBPASS_CONTENTS_INLINE );
+			const VkSubpassContents subpass = VK_SUBPASS_CONTENTS_INLINE,
+			const uint32_t unDepthImageIndex = 0 );
 
-		void SubmitDraw(
+		// On failure, stop rendering and wait for GPU completion before releasing resources
+		VkResult SubmitDraw(
 			const uint32_t unSwpachainImageIndex,
 			std::vector< CDeviceBuffer * > &vecStagingBuffers,
 			const uint32_t timeoutNs = 1000000000,
 			const VkCommandBufferResetFlags transferBufferResetFlags = 0,
 			const VkCommandBufferResetFlags renderBufferResetFlags = 0 );
 
-		void BeginBufferUpdates( const uint32_t unSwpachainImageIndex );
-		void SubmitBufferUpdates( const uint32_t unSwpachainImageIndex );
+		VkResult BeginBufferUpdates( const uint32_t unSwpachainImageIndex );
+		VkResult SubmitBufferUpdates( const uint32_t unSwpachainImageIndex );
 		void CalculateViewMatrices( std::array< XrMatrix4x4f, 2 > &outViewMatrices, const XrVector3f *eyeScale );
 
 		VkDescriptorPool CreateDescriptorPool( 
@@ -618,6 +639,7 @@ namespace xrlib
 
 	  private:
 		CSession *m_pSession = nullptr;
+		XrResult m_xrFrameError = XR_SUCCESS;
 		bool m_bUseVisMask = false;
 
 		uint32_t m_unTextureWidth = 0;
