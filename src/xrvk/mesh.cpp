@@ -16,6 +16,11 @@
 
 namespace xrlib
 {
+	static bool IsMirrored( const XrMatrix4x4f &matrix )
+	{
+		const auto &m = matrix.m;
+		return m[ 0 ] * ( m[ 5 ] * m[ 10 ] - m[ 6 ] * m[ 9 ] ) - m[ 4 ] * ( m[ 1 ] * m[ 10 ] - m[ 2 ] * m[ 9 ] ) + m[ 8 ] * ( m[ 1 ] * m[ 6 ] - m[ 2 ] * m[ 5 ] ) < 0.f;
+	}
 
 	void SSkin::UpdateMatrices( const std::vector< XrQuaternionf > &orientation, const std::vector< XrVector3f > &position, XrVector3f scale )
 	{
@@ -161,6 +166,8 @@ namespace xrlib
 				return result;
 		}
 
+		UpdateSectionBounds();
+
 		// Reset if requested
 		if ( bReset )
 			Reset();
@@ -173,6 +180,7 @@ namespace xrlib
 		if ( !pAnimation || !layout || m_pSkinningBuffer || m_vkSkinningPool )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
+		m_modelFromAsset = modelFromAsset;
 		pAnimation->GetSkinningVertices( vertices );
 		pAnimation->GetSkinningMatrices( m_vecSkinningMatrices );
 		const auto &morphVertices = pAnimation->GetMorphVertices();
@@ -279,10 +287,141 @@ namespace xrlib
 			return result;
 
 		memcpy( m_pVertexBuffer->GetMappedData(), vertices.data(), sizeof( SMeshVertex ) * vertices.size() );
+		UpdateSectionBounds();
 		return VK_SUCCESS;
 	}
 
-	void CRenderModel::Draw( const VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo ) 
+	void CRenderModel::UpdateSectionBounds()
+	{
+		m_vecSectionBounds.assign( materialSections.size(), {} );
+		for ( size_t i = 0; i < materialSections.size(); ++i )
+		{
+			const auto &section = materialSections[ i ];
+			auto &bounds = m_vecSectionBounds[ i ];
+			if ( !section.indexCount )
+				continue;
+			bounds.lower = { FLT_MAX, FLT_MAX, FLT_MAX };
+			bounds.upper = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+			for ( uint32_t index = 0; index < section.indexCount; ++index )
+			{
+				const auto vertexIndex = indices.at( section.firstIndex + index );
+				const auto &vertex = vertices.at( vertexIndex );
+				const auto &position = vertex.position;
+				bounds.lower = { std::min( bounds.lower.x, position.x ), std::min( bounds.lower.y, position.y ), std::min( bounds.lower.z, position.z ) };
+				bounds.upper = { std::max( bounds.upper.x, position.x ), std::max( bounds.upper.y, position.y ), std::max( bounds.upper.z, position.z ) };
+				if ( !m_pSkinningBuffer )
+					continue;
+
+				for ( uint32_t joint = 0; joint < JOINT_INFLUENCE_COUNT; ++joint )
+					if ( vertex.weights[ joint ] > 0.f && std::find( bounds.joints.begin(), bounds.joints.end(), vertex.joints[ joint ] ) == bounds.joints.end() )
+						bounds.joints.push_back( vertex.joints[ joint ] );
+
+				const auto &morphVertices = pAnimation->GetMorphVertices();
+				if ( vertexIndex >= morphVertices.size() )
+					continue;
+				const auto &morph = morphVertices[ vertexIndex ];
+				for ( uint32_t target = 0; target < morph.targetCount; ++target )
+				{
+					const auto &delta = pAnimation->GetMorphDeltas().at( morph.firstDelta + target * morph.targetStride ).position;
+					const uint32_t weight = morph.firstWeight + target;
+					auto entry = std::find_if( bounds.morphs.begin(), bounds.morphs.end(), [ & ]( const auto &value ) { return value.weight == weight; } );
+					if ( entry == bounds.morphs.end() )
+					{
+						bounds.morphs.push_back( { weight } );
+						entry = std::prev( bounds.morphs.end() );
+					}
+					entry->lower = { std::min( entry->lower.x, delta.x ), std::min( entry->lower.y, delta.y ), std::min( entry->lower.z, delta.z ) };
+					entry->upper = { std::max( entry->upper.x, delta.x ), std::max( entry->upper.y, delta.y ), std::max( entry->upper.z, delta.z ) };
+				}
+			}
+		}
+	}
+
+	XrVector3f CRenderModel::GetSectionCenter( uint32_t unSection ) const
+	{
+		const auto &bounds = m_vecSectionBounds.at( unSection );
+		auto lower = bounds.lower, upper = bounds.upper;
+
+		// Animate conservative boxes, vertex deformation stays in the GPU shader
+		for ( const auto &morph : bounds.morphs )
+		{
+			const float weight = pAnimation->GetMorphWeights().at( morph.weight );
+			lower.x += std::min( morph.lower.x * weight, morph.upper.x * weight );
+			lower.y += std::min( morph.lower.y * weight, morph.upper.y * weight );
+			lower.z += std::min( morph.lower.z * weight, morph.upper.z * weight );
+			upper.x += std::max( morph.lower.x * weight, morph.upper.x * weight );
+			upper.y += std::max( morph.lower.y * weight, morph.upper.y * weight );
+			upper.z += std::max( morph.lower.z * weight, morph.upper.z * weight );
+		}
+		if ( !bounds.joints.empty() )
+		{
+			XrVector3f animatedLower { FLT_MAX, FLT_MAX, FLT_MAX }, animatedUpper { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+			for ( const auto joint : bounds.joints )
+			{
+				XrMatrix4x4f transform;
+				XrMatrix4x4f_Multiply( &transform, &m_modelFromAsset, &m_vecSkinningMatrices.at( joint ) );
+				for ( uint32_t corner = 0; corner < 8; ++corner )
+				{
+					const XrVector3f local { corner & 1 ? upper.x : lower.x, corner & 2 ? upper.y : lower.y, corner & 4 ? upper.z : lower.z };
+					XrVector3f world;
+					XrMatrix4x4f_TransformVector3f( &world, &transform, &local );
+					animatedLower = { std::min( animatedLower.x, world.x ), std::min( animatedLower.y, world.y ), std::min( animatedLower.z, world.z ) };
+					animatedUpper = { std::max( animatedUpper.x, world.x ), std::max( animatedUpper.y, world.y ), std::max( animatedUpper.z, world.z ) };
+				}
+			}
+			lower = animatedLower;
+			upper = animatedUpper;
+		}
+		return { ( lower.x + upper.x ) * .5f, ( lower.y + upper.y ) * .5f, ( lower.z + upper.z ) * .5f };
+	}
+
+	void CRenderModel::CollectDraws( std::vector< SMaterialDraw > &outDraws, const CRenderInfo &renderInfo )
+	{
+		if ( instances.empty() )
+			return;
+
+		const bool sharedWinding = std::all_of( instanceMatrices.begin(), instanceMatrices.end(), [ & ]( const auto &matrix ) { return IsMirrored( matrix ) == IsMirrored( instanceMatrices.front() ); } );
+
+		for ( uint32_t sectionIndex = 0; sectionIndex < materialSections.size(); ++sectionIndex )
+		{
+			const auto &section = materialSections[ sectionIndex ];
+			const bool blend = materials.at( section.materialIndex ).getAlphaMode() == EAlphaMode::Blend;
+			// Keep opaque hardware instances together when they share the same winding
+			if ( !blend && sharedWinding )
+			{
+				outDraws.push_back( { this, sectionIndex, UINT32_MAX, 0.f, false } );
+				continue;
+			}
+
+			const XrVector3f center = GetSectionCenter( sectionIndex );
+
+			for ( uint32_t instance = 0; instance < GetInstanceCount(); ++instance )
+			{
+				XrVector3f world, left, right;
+				XrMatrix4x4f_TransformVector3f( &world, &instanceMatrices[ instance ], &center );
+				XrMatrix4x4f_TransformVector3f( &left, &renderInfo.state.eyeViewMatrices[ 0 ], &world );
+				XrMatrix4x4f_TransformVector3f( &right, &renderInfo.state.eyeViewMatrices[ 1 ], &world );
+				outDraws.push_back( { this, sectionIndex, instance, -( left.z + right.z ) * .5f, blend } );
+			}
+		}
+	}
+
+	void CRenderModel::Draw( VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo )
+	{
+		if ( !renderInfo.materialPipelines.contains( graphicsPipelineIndex ) || materialSections.empty() )
+		{
+			DrawSection( commandBuffer, renderInfo, UINT32_MAX, UINT32_MAX );
+			return;
+		}
+
+		std::vector< SMaterialDraw > draws;
+		CollectDraws( draws, renderInfo );
+		std::stable_sort( draws.begin(), draws.end(), []( const auto &a, const auto &b ) { return a.blend != b.blend ? !a.blend : ( a.blend && a.depth > b.depth ); } );
+		for ( const auto &draw : draws )
+			DrawSection( commandBuffer, renderInfo, draw.section, draw.instance );
+	}
+
+	void CRenderModel::DrawSection( VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo, uint32_t unSection, uint32_t unInstance )
 	{
 		// Set push constants
 		vkCmdPushConstants( 
@@ -296,8 +435,19 @@ namespace xrlib
 		// Set stencil reference
 		vkCmdSetStencilReference( commandBuffer, VK_STENCIL_FACE_FRONT_AND_BACK, 1 );
 
-		// Bind the graphics pipeline for this shape
-		vkCmdBindPipeline( commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderInfo.vecGraphicsPipelines[ graphicsPipelineIndex ] );
+		// Custom pipelines retain their caller-supplied state
+		uint32_t pipeline = graphicsPipelineIndex;
+		const auto variants = renderInfo.materialPipelines.find( pipeline );
+		if ( variants != renderInfo.materialPipelines.end() && unSection < materialSections.size() )
+		{
+			const auto &material = materials.at( materialSections[ unSection ].materialIndex );
+			const bool mirrored = IsMirrored( instanceMatrices.at( unInstance == UINT32_MAX ? 0 : unInstance ) );
+			const uint32_t variant = ( material.getAlphaMode() == EAlphaMode::Blend ? 1 : 0 ) | ( material.doubleSided ? 2 : 0 ) | ( mirrored ? 4 : 0 );
+			pipeline = variants->second[ variant ];
+		}
+		vkCmdBindPipeline( commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderInfo.vecGraphicsPipelines[ pipeline ] );
+		const uint32_t instanceCount = unInstance == UINT32_MAX ? GetInstanceCount() : 1;
+		const uint32_t firstInstance = unInstance == UINT32_MAX ? 0 : unInstance;
 
 		// Bind shape's index and vertex buffers
 		vkCmdBindIndexBuffer( commandBuffer, GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT32 );
@@ -338,16 +488,19 @@ namespace xrlib
 		if ( materialSections.empty() )
 		{
 			// Draw indexed - no material
-			vkCmdDrawIndexed( commandBuffer, indices.size(), GetInstanceCount(), 0, 0, 0 );
+			vkCmdDrawIndexed( commandBuffer, indices.size(), instanceCount, 0, 0, firstInstance );
 		}
 		else
 		{
 			// Draw indexed - draw per mesh's material sections
-			for ( auto &section : materialSections )
+			for ( uint32_t i = 0; i < materialSections.size(); ++i )
 			{
+				if ( unSection != UINT32_MAX && unSection != i )
+					continue;
+				const auto &section = materialSections[ i ];
 				if ( materials[ section.materialIndex ].descriptors.empty() )
 				{
-					vkCmdDrawIndexed( commandBuffer, section.indexCount, GetInstanceCount(), section.firstIndex, 0, 0 );
+					vkCmdDrawIndexed( commandBuffer, section.indexCount, instanceCount, section.firstIndex, 0, firstInstance );
 					continue;
 				}
 
@@ -361,7 +514,7 @@ namespace xrlib
 					0,
 					nullptr ); // dynamic offsets not supported
 
-				vkCmdDrawIndexed( commandBuffer, section.indexCount, GetInstanceCount(), section.firstIndex, 0, 0 );
+				vkCmdDrawIndexed( commandBuffer, section.indexCount, instanceCount, section.firstIndex, 0, firstInstance );
 			}
 		}
 

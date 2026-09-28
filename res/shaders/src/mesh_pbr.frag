@@ -69,11 +69,12 @@ float distanceAttenuation(float distanceSquared, float range) {
 }
 vec3 surfaceNormal(vec3 V) {
     vec3 N = safeNormalize(inNormal);
+    float faceSign = gl_FrontFacing ? 1.0 : -1.0;
     if (dot(N,N) < 0.5) {
         N = safeNormalize(cross(dFdx(inWorldPos),dFdy(inWorldPos)));
-        if (dot(N,V)<0.0) N = -N;
-    } else if (!gl_FrontFacing) N = -N;
-    if ((material.textureFlags & TEXTURE_NORMAL_BIT) == 0u) return N;
+        if (dot(N,V)*faceSign<0.0) N = -N;
+    }
+    if ((material.textureFlags & TEXTURE_NORMAL_BIT) == 0u) return N*faceSign;
     vec2 uv = textureUV(TEXTURE_NORMAL_BIT);
     vec3 sampled = texture(normalMap,uv).xyz*2.0-1.0;
     sampled.xy *= material.normalScale;
@@ -85,14 +86,14 @@ vec3 surfaceNormal(vec3 V) {
         vec3 p1=dFdx(inWorldPos), p2=dFdy(inWorldPos);
         vec2 t1=dFdx(uv), t2=dFdy(uv);
         float determinant=t1.x*t2.y-t1.y*t2.x;
-        if (abs(determinant)<1e-10) return N;
+        if (abs(determinant)<1e-10) return N*faceSign;
         T=(p1*t2.y-p2*t1.y)/determinant;
         B=(p2*t1.x-p1*t2.x)/determinant;
         T-=N*dot(N,T);
     }
     T=safeNormalize(T);
     B=safeNormalize(cross(N,T))*(dot(cross(N,T),B)<0.0 ? -1.0 : 1.0);
-    return safeNormalize(mat3(T,B,N)*sampled);
+    return safeNormalize(mat3(T,B,N)*sampled)*faceSign;
 }
 vec3 displayColor(vec3 linearColor) {
     uint op = scene.tonemapping.tonemap & 15u;
