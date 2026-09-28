@@ -175,21 +175,50 @@ namespace xrlib
 
 		pAnimation->GetSkinningVertices( vertices );
 		pAnimation->GetSkinningMatrices( m_vecSkinningMatrices );
+		const auto &morphVertices = pAnimation->GetMorphVertices();
+		const auto &morphDeltas = pAnimation->GetMorphDeltas();
+		const auto &morphWeights = pAnimation->GetMorphWeights();
 		const VkDeviceSize size = sizeof( XrMatrix4x4f ) * ( 1 + m_vecSkinningMatrices.size() );
+		const VkDeviceSize vertexSize = sizeof( SMorphVertex ) * ( 1 + morphVertices.size() );
+		const VkDeviceSize deltaSize = sizeof( SMorphDelta ) * std::max( size_t { 1 }, morphDeltas.size() );
+		const VkDeviceSize weightSize = sizeof( float ) * std::max( size_t { 1 }, morphWeights.size() );
 		auto *pVulkan = m_pSession->GetVulkan();
 		const VkDevice device = pVulkan->GetVkLogicalDevice();
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties( pVulkan->GetVkPhysicalDevice(), &properties );
-		if ( size > properties.limits.maxStorageBufferRange )
+		if ( std::max( { size, vertexSize, deltaSize, weightSize } ) > properties.limits.maxStorageBufferRange || properties.limits.maxPerStageDescriptorStorageBuffers < 4 || properties.limits.maxDescriptorSetStorageBuffers < 4 )
 			return VK_ERROR_FEATURE_NOT_PRESENT;
 
 		m_pSkinningBuffer = std::make_unique< CDeviceBuffer >( m_pSession );
 		VK_CHECK_RETURN( m_pSkinningBuffer->Init( VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, size ) );
 		VK_CHECK_RETURN( m_pSkinningBuffer->MapMemory() );
 		std::memcpy( m_pSkinningBuffer->GetMappedData(), &modelFromAsset, sizeof( modelFromAsset ) );
+
+		auto InitMorphBuffer = [ & ]( std::unique_ptr< CDeviceBuffer > &buffer, VkDeviceSize bytes )
+		{
+			buffer = std::make_unique< CDeviceBuffer >( m_pSession );
+			VK_CHECK_RETURN( buffer->Init( VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, bytes ) );
+			VK_CHECK_RETURN( buffer->MapMemory() );
+			std::memset( buffer->GetMappedData(), 0, static_cast< size_t >( bytes ) );
+			return VK_SUCCESS;
+		};
+		VK_CHECK_RETURN( InitMorphBuffer( m_pMorphVertexBuffer, vertexSize ) );
+		VK_CHECK_RETURN( InitMorphBuffer( m_pMorphDeltaBuffer, deltaSize ) );
+		VK_CHECK_RETURN( InitMorphBuffer( m_pMorphWeightBuffer, weightSize ) );
+
+		// The header lets models without morphs bind small, valid dummy buffers
+		const SMorphVertex header { static_cast< uint32_t >( morphVertices.size() ), 0, 0, 0 };
+		auto *pVertices = static_cast< uint8_t * >( m_pMorphVertexBuffer->GetMappedData() );
+		std::memcpy( pVertices, &header, sizeof( header ) );
+		if ( !morphVertices.empty() )
+			std::memcpy( pVertices + sizeof( header ), morphVertices.data(), morphVertices.size() * sizeof( SMorphVertex ) );
+		if ( !morphDeltas.empty() )
+			std::memcpy( m_pMorphDeltaBuffer->GetMappedData(), morphDeltas.data(), morphDeltas.size() * sizeof( SMorphDelta ) );
+
+		m_unMorphWeightCount = morphWeights.size();
 		VK_CHECK_RETURN( UpdateSkinning() );
 
-		VkDescriptorPoolSize poolSize { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 };
+		VkDescriptorPoolSize poolSize { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 };
 		VkDescriptorPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
 		poolInfo.maxSets = 1;
 		poolInfo.poolSizeCount = 1;
@@ -202,30 +231,40 @@ namespace xrlib
 		allocation.pSetLayouts = &layout;
 		VK_CHECK_RETURN( vkAllocateDescriptorSets( device, &allocation, &m_vkSkinningSet ) );
 
-		VkDescriptorBufferInfo buffer { m_pSkinningBuffer->GetVkBuffer(), 0, size };
-		VkWriteDescriptorSet descriptor { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		descriptor.dstSet = m_vkSkinningSet;
-		descriptor.dstBinding = 0;
-		descriptor.descriptorCount = 1;
-		descriptor.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-		descriptor.pBufferInfo = &buffer;
-		vkUpdateDescriptorSets( device, 1, &descriptor, 0, nullptr );
+		const std::vector< VkDescriptorBufferInfo > buffers {
+			{ m_pSkinningBuffer->GetVkBuffer(), 0, size }, { m_pMorphVertexBuffer->GetVkBuffer(), 0, vertexSize }, { m_pMorphDeltaBuffer->GetVkBuffer(), 0, deltaSize }, { m_pMorphWeightBuffer->GetVkBuffer(), 0, weightSize } };
+		std::vector< VkWriteDescriptorSet > descriptors( buffers.size(), { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } );
+		for ( uint32_t i = 0; i < descriptors.size(); ++i )
+		{
+			auto &descriptor = descriptors[ i ];
+			descriptor.dstSet = m_vkSkinningSet;
+			descriptor.dstBinding = i;
+			descriptor.descriptorCount = 1;
+			descriptor.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			descriptor.pBufferInfo = &buffers[ i ];
+		}
+
+		vkUpdateDescriptorSets( device, static_cast< uint32_t >( descriptors.size() ), descriptors.data(), 0, nullptr );
 		return VK_SUCCESS;
 	}
 
 	VkResult CRenderModel::UpdateSkinning()
 	{
-		if ( !pAnimation || !m_pSkinningBuffer )
+		if ( !pAnimation || !m_pSkinningBuffer || !m_pMorphWeightBuffer )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
 		const auto count = m_vecSkinningMatrices.size();
 		pAnimation->GetSkinningMatrices( m_vecSkinningMatrices );
-		if ( m_vecSkinningMatrices.size() != count )
+		if ( m_vecSkinningMatrices.size() != count || pAnimation->GetMorphWeights().size() != m_unMorphWeightCount )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
 		auto *pData = static_cast< uint8_t * >( m_pSkinningBuffer->GetMappedData() );
-		if ( !pData )
+		if ( !pData || !m_pMorphWeightBuffer->GetMappedData() )
 			return VK_ERROR_MEMORY_MAP_FAILED;
+
+		if ( m_unMorphWeightCount )
+			std::memcpy( m_pMorphWeightBuffer->GetMappedData(), pAnimation->GetMorphWeights().data(), m_unMorphWeightCount * sizeof( float ) );
+
 		std::memcpy( pData + sizeof( XrMatrix4x4f ), m_vecSkinningMatrices.data(), count * sizeof( XrMatrix4x4f ) );
 		return VK_SUCCESS;
 	}

@@ -28,6 +28,12 @@ layout(location=7) in vec4 inWeights;
 #endif
 
 void main() {
+    vec3 position = inPosition;
+    vec3 vertexNormal = inNormal;
+    vec3 vertexTangent = inTangent.xyz;
+#ifdef XRVK_SKINNED
+    morphVertex(uint(gl_VertexIndex), position, vertexNormal, vertexTangent);
+#endif
     mat4 modelMatrix = mat4(model0, model1, model2, model3);
 #ifdef XRVK_SKINNED
     modelMatrix *= skinningTransform(inJoints, inWeights);
@@ -38,20 +44,20 @@ void main() {
     // Blended skin transforms can contain shear and nonuniform scale
     mat3 cofactors = mat3(cross(basis[1],basis[2]), cross(basis[2],basis[0]), cross(basis[0],basis[1]));
     float determinant = dot(basis[0],cofactors[0]);
-    vec3 normal = abs(determinant) > 1e-20 ? (cofactors * inNormal) / determinant : vec3(0);
+    vec3 normal = abs(determinant) > 1e-20 ? (cofactors * vertexNormal) / determinant : vec3(0);
 #else
     // Instance TRS normals use reciprocal squared column lengths
     vec3 scaleSquared = vec3(dot(basis[0],basis[0]), dot(basis[1],basis[1]), dot(basis[2],basis[2]));
-    vec3 normal = basis * (inNormal / max(scaleSquared, vec3(1e-12)));
+    vec3 normal = basis * (vertexNormal / max(scaleSquared, vec3(1e-12)));
 #endif
     outNormal = normal * inversesqrt(max(dot(normal,normal),1e-20));
-    vec3 tangent = basis * inTangent.xyz;
+    vec3 tangent = basis * vertexTangent;
     tangent -= outNormal * dot(outNormal,tangent);
     tangent *= inversesqrt(max(dot(tangent,tangent),1e-20));
     outTangent = tangent;
     float mirrored = dot(cross(basis[0],basis[1]),basis[2]) < 0.0 ? -1.0 : 1.0;
     outBitangent = cross(outNormal,tangent) * inTangent.w * mirrored;
-    vec4 world = modelMatrix * vec4(inPosition,1);
+    vec4 world = modelMatrix * vec4(position,1);
     outWorldPos = world.xyz;
     outViewDirection = scene.eyePositions[gl_ViewIndex].xyz - world.xyz;
     outUV = inTexCoord0;

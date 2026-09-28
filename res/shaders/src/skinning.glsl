@@ -9,6 +9,35 @@ layout(set=2, binding=0, std430) readonly buffer Skinning {
     mat4 transforms[];
 } skinning;
 
+struct MorphDelta {
+    vec4 position;
+    vec4 normal;
+    vec4 tangent;
+};
+layout(set=2, binding=1, std430) readonly buffer MorphVertices {
+    uvec4 header;
+    uvec4 vertices[];
+} morphVertices;
+layout(set=2, binding=2, std430) readonly buffer MorphDeltas {
+    MorphDelta deltas[];
+} morphDeltas;
+layout(set=2, binding=3, std430) readonly buffer MorphWeights {
+    float weights[];
+} morphWeights;
+
+void morphVertex(uint vertex, inout vec3 position, inout vec3 normal, inout vec3 tangent) {
+    if (vertex >= morphVertices.header.x) return;
+    uvec4 entry = morphVertices.vertices[vertex];
+    for (uint target = 0; target < entry.y; ++target) {
+        float weight = morphWeights.weights[entry.z + target];
+        if (weight == 0.0) continue;
+        MorphDelta delta = morphDeltas.deltas[entry.x + target * entry.w];
+        position += delta.position.xyz * weight;
+        normal += delta.normal.xyz * weight;
+        tangent += delta.tangent.xyz * weight;
+    }
+}
+
 // Joint indices and normalised weights are validated before vertex upload
 mat4 skinningTransform(ivec4 joints, vec4 weights) {
     mat4 pose = skinning.transforms[joints.x] * weights.x

@@ -391,9 +391,7 @@ namespace xrlib
 		// Process mesh if present
 		if ( node.meshIndex.has_value() )
 		{
-			const size_t first = vertices.size();
-			ProcessMesh( model, model.meshes[ *node.meshIndex ], vertices, indices, materialSections );
-			meshes.push_back( { static_cast< size_t >( &node - model.nodes.data() ), first, vertices.size() - first } );
+			ProcessMesh( model, model.meshes[ *node.meshIndex ], vertices, indices, materialSections, &meshes, static_cast< size_t >( &node - model.nodes.data() ) );
 		}
 
 		// Process child nodes
@@ -403,12 +401,14 @@ namespace xrlib
 		}
 	}
 
-	void CGltf::ProcessMesh( 
+	void CGltf::ProcessMesh(
 		const fastgltf::Asset &model,
 		const fastgltf::Mesh &mesh,
-		std::vector< SMeshVertex > &vertices, 
-		std::vector< uint32_t > &indices, 
-		std::vector< SMeshSection > &materialSections )
+		std::vector< SMeshVertex > &vertices,
+		std::vector< uint32_t > &indices,
+		std::vector< SMeshSection > &materialSections,
+		std::vector< SAnimationMesh > *pMeshes,
+		size_t nodeIndex )
 	{
 		// Process each primitive in the mesh
 		for ( const auto &primitive : mesh.primitives )
@@ -513,6 +513,41 @@ namespace xrlib
 			if ( count % 3 != 0 )
 				throw std::runtime_error( "Incomplete glTF triangle" );
 
+			SAnimationMesh animationMesh { nodeIndex, vertexBase, posAccessor.count, {}, false };
+			if ( pMeshes && !primitive.targets.empty() )
+			{
+				animationMesh.morphTargets.resize( primitive.targets.size() );
+				for ( size_t target = 0; target < primitive.targets.size(); ++target )
+				{
+					auto &deltas = animationMesh.morphTargets[ target ];
+					deltas.resize( posAccessor.count );
+					for ( const auto &attribute : primitive.targets[ target ] )
+					{
+						if ( attribute.name != "POSITION" && attribute.name != "NORMAL" && attribute.name != "TANGENT" )
+							throw std::runtime_error( "Unsupported glTF morph attribute: " + std::string( attribute.name ) );
+						if ( primitive.findAttribute( attribute.name ) == primitive.attributes.end() )
+							throw std::runtime_error( "Morph attribute has no base attribute" );
+
+						const auto &accessor = model.accessors.at( attribute.accessorIndex );
+						if ( accessor.count != posAccessor.count || accessor.type != fastgltf::AccessorType::Vec3 || accessor.componentType != fastgltf::ComponentType::Float )
+							throw std::runtime_error( "Invalid glTF morph accessor" );
+
+						fastgltf::iterateAccessorWithIndex< fastgltf::math::fvec3 >(
+							model,
+							accessor,
+							[ & ]( const auto &value, size_t i )
+							{
+								for ( size_t component = 0; component < 3; ++component )
+									if ( !std::isfinite( value[ component ] ) )
+										throw std::runtime_error( "Non-finite glTF morph delta" );
+
+								auto &delta = attribute.name == "POSITION" ? deltas[ i ].position : attribute.name == "NORMAL" ? deltas[ i ].normal : deltas[ i ].tangent;
+								delta = { value[ 0 ], value[ 1 ], value[ 2 ], 0.f };
+							} );
+					}
+				}
+			}
+
 			// Missing normals require flat shading, split shared vertices at each face
 			if ( primitive.findAttribute( "NORMAL" ) == primitive.attributes.end() )
 			{
@@ -537,10 +572,27 @@ namespace xrlib
 					}
 				}
 
+				for ( auto &target : animationMesh.morphTargets )
+				{
+					std::vector< SMorphDelta > flatDeltas;
+					flatDeltas.reserve( count );
+					for ( size_t i = firstIndex; i < indices.size(); ++i )
+						flatDeltas.push_back( target[ indices[ i ] - vertexBase ] );
+
+					target = std::move( flatDeltas );
+				}
+
+				animationMesh.bRecalculateNormals = !animationMesh.morphTargets.empty();
 				vertices.resize( vertexBase );
 				vertices.insert( vertices.end(), flatVertices.begin(), flatVertices.end() );
 				for ( size_t i = 0; i < count; ++i )
 					indices[ firstIndex + i ] = vertexBase + static_cast< uint32_t >( i );
+			}
+
+			if ( pMeshes )
+			{
+				animationMesh.vertexCount = vertices.size() - vertexBase;
+				pMeshes->push_back( std::move( animationMesh ) );
 			}
 
 			if ( count )

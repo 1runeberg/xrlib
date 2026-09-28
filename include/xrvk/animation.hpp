@@ -19,11 +19,32 @@
 namespace xrlib
 {
 
+	// std430 entries shared with the morph buffers in skinning.glsl
+	struct alignas( 16 ) SMorphDelta
+	{
+		XrVector4f position {};
+		XrVector4f normal {};
+		XrVector4f tangent {};
+	};
+
+	struct alignas( 16 ) SMorphVertex
+	{
+		uint32_t firstDelta = 0;
+		uint32_t targetCount = 0;
+		uint32_t firstWeight = 0;
+		uint32_t targetStride = 0;
+	};
+
+	static_assert( sizeof( SMorphDelta ) == 48 );
+	static_assert( sizeof( SMorphVertex ) == 16 );
+
 	struct SAnimationMesh
 	{
 		size_t nodeIndex;
 		size_t firstVertex;
 		size_t vertexCount;
+		std::vector< std::vector< SMorphDelta > > morphTargets;
+		bool bRecalculateNormals = false;
 	};
 
 	// Owns decoded model data and playback state, the source asset can be released after construction
@@ -49,12 +70,18 @@ namespace xrlib
 		// Model-space transforms for rigid nodes and skins, with identity at index zero
 		void GetSkinningMatrices( std::vector< XrMatrix4x4f > &outMatrices ) const;
 
+		const std::vector< SMorphVertex > &GetMorphVertices() const { return m_vecMorphVertices; }
+		const std::vector< SMorphDelta > &GetMorphDeltas() const { return m_vecMorphDeltas; }
+		const std::vector< float > &GetMorphWeights() const { return m_vecMorphWeights; }
+
 	  private:
 		struct SNode
 		{
 			std::variant< fastgltf::TRS, fastgltf::math::fmat4x4 > transform;
 			std::vector< size_t > children;
 			size_t skinIndex = SIZE_MAX;
+			size_t firstWeight = 0;
+			std::vector< float > weights;
 		};
 
 		struct SSkinData
@@ -70,6 +97,7 @@ namespace xrlib
 			fastgltf::AnimationInterpolation interpolation;
 			std::vector< float > times;
 			std::vector< fastgltf::math::fvec4 > values;
+			std::vector< float > weights;
 		};
 
 		struct SClip
@@ -78,7 +106,6 @@ namespace xrlib
 			std::vector< SCurve > curves;
 			float start = 0.f;
 			float end = 0.f;
-			bool bMorphWeights = false;
 		};
 
 		std::vector< SNode > m_vecNodes;
@@ -89,6 +116,9 @@ namespace xrlib
 		std::vector< SClip > m_vecClips;
 		std::vector< SAnimationMesh > m_vecMeshes;
 		std::vector< SMeshVertex > m_vecRestVertices;
+		std::vector< SMorphVertex > m_vecMorphVertices;
+		std::vector< SMorphDelta > m_vecMorphDeltas;
+		std::vector< float > m_vecMorphWeights;
 		std::vector< fastgltf::math::fmat4x4 > m_vecWorld;
 		std::vector< std::vector< fastgltf::math::fmat4x4 > > m_vecPalettes;
 		size_t m_unClipIndex = SIZE_MAX;
