@@ -277,13 +277,14 @@ namespace vkutils
 					texelBytes = 6;
 					break;
 				case VK_FORMAT_R16G16B16A16_UNORM:
+				case VK_FORMAT_R16G16B16A16_SFLOAT:
 					texelBytes = 8;
 					break;
 				default:
 					return VK_ERROR_FORMAT_NOT_SUPPORTED;
 			}
 
-			if ( !image.image || !image.width || !image.height )
+			if ( !image.image || !image.width || !image.height || !image.layers )
 				return VK_ERROR_INITIALIZATION_FAILED;
 
 			uint32_t width = image.width, height = image.height;
@@ -293,8 +294,8 @@ namespace vkutils
 			{
 				const SImageMip mip = image.mips.empty() ? SImageMip { 0, image.data.size() } : image.mips[ level ];
 
-				if ( mip.offset > image.data.size() || mip.size > image.data.size() - mip.offset ||
-					 mip.offset % std::lcm( 4u, texelBytes ) || mip.size / texelBytes / width != height || mip.size % ( VkDeviceSize( width ) * texelBytes ) )
+				if ( mip.offset > image.data.size() || mip.size > image.data.size() - mip.offset || mip.offset % std::lcm( 4u, texelBytes ) || mip.size / texelBytes / width / image.layers != height ||
+					 mip.size % ( VkDeviceSize( width ) * texelBytes * image.layers ) )
 					return VK_ERROR_INITIALIZATION_FAILED;
 
 				if ( level + 1 < levels && width == 1 && height == 1 )
@@ -350,7 +351,7 @@ namespace vkutils
 			barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 			barrier.image = images[ i ].image;
-			barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast< uint32_t >( images[ i ].mips.empty() ? 1 : images[ i ].mips.size() ), 0, 1 };
+			barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast< uint32_t >( images[ i ].mips.empty() ? 1 : images[ i ].mips.size() ), 0, images[ i ].layers };
 			barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -363,7 +364,7 @@ namespace vkutils
 			{
 				auto &copy = copies[ level ];
 				copy.bufferOffset = offsets[ i ] + ( images[ i ].mips.empty() ? 0 : images[ i ].mips[ level ].offset );
-				copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+				copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, images[ i ].layers };
 				copy.imageExtent = { width, height, 1 };
 
 				width = ( std::max )( 1u, width / 2 );

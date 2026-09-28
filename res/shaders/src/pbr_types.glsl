@@ -48,5 +48,8 @@ layout(set=1, binding=0, std140) uniform SceneLighting {
     Tonemapping tonemapping;
     vec4 eyePositions[2];
     uint outputSRGB;
+    float environmentIntensity;
+    float environmentRotation;
+    float environmentMaxLod;
 } scene;
 #endif

@@ -1,16 +1,17 @@
-/* 
- * Copyright 2024,2025 Copyright Rune Berg 
+/*
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * This work is the next iteration of OpenXRProvider (v1, v2)
  * OpenXRProvider (v1): Released 2021 -  https://github.com/1runeberg/OpenXRProvider
  * OpenXRProvider (v2): Released 2022 - https://github.com/1runeberg/OpenXRProvider_v2/
  * v1 & v2 licensed under MIT: https://opensource.org/license/mit
-*/
+ */
 #pragma once
 #include <xrlib/common.hpp>
+
 namespace xrlib
 {
 	// Optimized for:
@@ -117,7 +118,9 @@ namespace xrlib
 		alignas( 16 ) STonemapping tonemapping;
 		alignas( 16 ) XrVector4f eyePositions[ 2 ] {};				   // App-space eye positions, updated by the renderer
 		uint32_t outputSRGB = 0;									   // The render target performs the linear-to-sRGB conversion
-		uint32_t padding[ 3 ] {};
+		float environmentIntensity = 0.f;
+		float environmentRotation = 0.f; // Y-axis rotation in radians
+		float environmentMaxLod = 0.f;
 
 		// Helper functions to manage active lights
 		bool addPointLight( const SPointLight &light )
@@ -167,3 +170,6 @@ static_assert( offsetof( xrlib::SSceneLighting, activeSpotLights ) == 276 );
 static_assert( offsetof( xrlib::SSceneLighting, tonemapping ) == 288 );
 static_assert( offsetof( xrlib::SSceneLighting, eyePositions ) == 320 );
 static_assert( offsetof( xrlib::SSceneLighting, outputSRGB ) == 352 );
+
+static_assert( offsetof( xrlib::SSceneLighting, environmentIntensity ) == 356 );
+static_assert( offsetof( xrlib::SSceneLighting, environmentMaxLod ) == 364 );
