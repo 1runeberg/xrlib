@@ -170,7 +170,8 @@ namespace xrlib
 
 		// Validate texture formats
 		std::vector< int64_t > supportedFormats;
-		assert ( XR_UNQUALIFIED_SUCCESS( pSession->GetSupportedTextureFormats( supportedFormats ) ) );
+		if ( pSession->GetSupportedTextureFormats( supportedFormats ) != XR_SUCCESS )
+			throw std::runtime_error( "Failed to enumerate swapchain formats" );
 
 		bool bFoundColor = false;
 		bool bFoundDepth = false;
@@ -187,7 +188,8 @@ namespace xrlib
 				bFoundDepth = true;
 		}
 
-		assert( bFoundColor && bFoundDepth );
+		if ( !bFoundColor || !bFoundDepth )
+			throw std::runtime_error( "Unsupported swapchain format" );
 		assert( !pSession->GetVulkan()->IsDepthFormat( vkColorFormat ) );
 		assert( pSession->GetVulkan()->IsDepthFormat( vkDepthFormat ) );
 	};
@@ -200,12 +202,12 @@ namespace xrlib
 			vkDeviceWaitIdle( device );
 			for ( auto &target : m_vecMultiviewRenderTargets )
 			{
-				if ( target.vkFrameBuffer )
-					vkDestroyFramebuffer( device, target.vkFrameBuffer, nullptr );
+				for ( auto framebuffer : target.framebuffers )
+					vkDestroyFramebuffer( device, framebuffer, nullptr );
 				if ( target.vkColorImageDescriptor.imageView )
 					vkDestroyImageView( device, target.vkColorImageDescriptor.imageView, nullptr );
-				if ( target.vkDepthImageView )
-					vkDestroyImageView( device, target.vkDepthImageView, nullptr );
+				for ( auto view : target.depthViews )
+					vkDestroyImageView( device, view, nullptr );
 				if ( target.vkMSAAColorView )
 					vkDestroyImageView( device, target.vkMSAAColorView, nullptr );
 				if ( target.vkMSAADepthView )
@@ -255,12 +257,14 @@ namespace xrlib
 		commandPoolCI.queueFamilyIndex = GetAppSession()->GetVulkan()->GetVkQueueIndex_GraphicsFamily();
 		commandPoolCI.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 		VkResult result = vkCreateCommandPool( GetLogicalDevice(), &commandPoolCI, nullptr, &m_vkRenderCommandPool );
-		assert( result == VK_SUCCESS );
+		if ( result != VK_SUCCESS )
+			return XR_ERROR_RUNTIME_FAILURE;
 
-		commandPoolCI.queueFamilyIndex = GetAppSession()->GetVulkan()->GetVkQueueIndex_TransferFamily();
+		commandPoolCI.queueFamilyIndex = GetAppSession()->GetVulkan()->GetVkQueueIndex_GraphicsFamily();
 		commandPoolCI.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 		result = vkCreateCommandPool( GetLogicalDevice(), &commandPoolCI, nullptr, &m_vkTransferCommandPool );
-		assert( result == VK_SUCCESS );
+		if ( result != VK_SUCCESS )
+			return XR_ERROR_RUNTIME_FAILURE;
 
 		return XR_SUCCESS;
 	}
@@ -402,11 +406,6 @@ namespace xrlib
 
 		// Swapchain image count
 		uint32_t unSwapchainImageCount = (uint32_t) m_vecSwapchainColorImages.size();
-		if ( unSwapchainImageCount != (uint32_t) m_vecSwapchainDepthImages.size() )
-		{
-			LogError( "", "Error creating multiview render targets: color & depth swpachain must be of equal length!" );
-			return XR_ERROR_VALIDATION_FAILURE;
-		}
 
 		// Create render targets
 		for ( uint32_t i = 0; i < unSwapchainImageCount; i++ )
@@ -486,7 +485,8 @@ namespace xrlib
 				&imageViewCI, 
 				pCallbacks, 
 				&m_vecMultiviewRenderTargets.back().vkColorImageDescriptor.imageView );
-			assert( result == VK_SUCCESS );
+			if ( result != VK_SUCCESS )
+				return XR_ERROR_RUNTIME_FAILURE;
 
 			// Create MSAA depth image
 			VkImageCreateInfo msaaDepthCI { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -537,21 +537,22 @@ namespace xrlib
 
 			VK_CHECK_RESULT( vkCreateImageView( GetLogicalDevice(), &msaaDepthViewCI, nullptr, &m_vecMultiviewRenderTargets.back().vkMSAADepthView ) );
 
-			// Depth image view (image from openxr runtime, will be used as the msaa resolve image)
-			m_vecMultiviewRenderTargets.back().vkDepthTexture = m_vecSwapchainDepthImages[ i ].image;
-
-			imageViewCI.pNext = NULL;
-			imageViewCI.flags = depthCreateFlags;
-			imageViewCI.format = m_vkDepthFormat;
-			imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | ( m_pSession->GetVulkan()->IsStencilFormat( m_vkDepthFormat ) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0 );
-			imageViewCI.image = m_vecMultiviewRenderTargets.back().vkDepthTexture;
-
-			result = vkCreateImageView( 
-				GetLogicalDevice(), 
-				&imageViewCI, 
-				pCallbacks, 
-				&m_vecMultiviewRenderTargets.back().vkDepthImageView );
-			assert( result == VK_SUCCESS );
+			// Depth acquisition is independent of the colour image index
+			for ( const auto &depthImage : m_vecSwapchainDepthImages )
+			{
+				imageViewCI.pNext = pDepthNext;
+				imageViewCI.flags = depthCreateFlags;
+				imageViewCI.format = m_vkDepthFormat;
+				imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | ( m_pSession->GetVulkan()->IsStencilFormat( m_vkDepthFormat ) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0 );
+				imageViewCI.image = depthImage.image;
+				VkImageView view = VK_NULL_HANDLE;
+				result = vkCreateImageView( GetLogicalDevice(), &imageViewCI, pCallbacks, &view );
+				if ( result != VK_SUCCESS )
+					return XR_ERROR_RUNTIME_FAILURE;
+				m_vecMultiviewRenderTargets.back().depthViews.push_back( view );
+			}
+			m_vecMultiviewRenderTargets.back().vkDepthTexture = m_vecSwapchainDepthImages.front().image;
+			m_vecMultiviewRenderTargets.back().vkDepthImageView = m_vecMultiviewRenderTargets.back().depthViews.front();
 
 			// Command buffers
 			VkCommandBufferAllocateInfo commandBufferAlloc { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
@@ -560,19 +561,23 @@ namespace xrlib
 			commandBufferAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 			commandBufferAlloc.commandBufferCount = 1;
 			result = vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &m_vecMultiviewRenderTargets.back().vkRenderCommandBuffer );
-			assert( result == VK_SUCCESS );
+			if ( result != VK_SUCCESS )
+				return XR_ERROR_RUNTIME_FAILURE;
 
 			commandBufferAlloc.commandPool = m_vkTransferCommandPool;
 			result = vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &m_vecMultiviewRenderTargets.back().vkTransferCommandBuffer );
-			assert( result == VK_SUCCESS );
+			if ( result != VK_SUCCESS )
+				return XR_ERROR_RUNTIME_FAILURE;
 
 			// Fences
 			VkFenceCreateInfo fenceCI { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 			result = vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &m_vecMultiviewRenderTargets.back().vkRenderCommandFence );
-			assert( result == VK_SUCCESS );
+			if ( result != VK_SUCCESS )
+				return XR_ERROR_RUNTIME_FAILURE;
 
 			result = vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &m_vecMultiviewRenderTargets.back().vkTransferCommandFence );
-			assert( result == VK_SUCCESS );
+			if ( result != VK_SUCCESS )
+				return XR_ERROR_RUNTIME_FAILURE;
 		}
 
 		return XR_SUCCESS;
@@ -592,7 +597,8 @@ namespace xrlib
 		for ( auto &renderTarget : m_vecMultiviewRenderTargets )
 		{
 			VkResult result = vkCreateSampler( GetLogicalDevice(), &samplerCI, pCallbacks, &renderTarget.vkColorImageDescriptor.sampler );
-			assert( result == VK_SUCCESS );
+			if ( result != VK_SUCCESS )
+				return XR_ERROR_RUNTIME_FAILURE;
 		}
 
 		return XR_SUCCESS; 
@@ -820,9 +826,16 @@ namespace xrlib
 			std::array< VkImageView, 4 > arrImageViews { VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE };
 			renderTarget.SetImageViewArray( arrImageViews );
 
-			VkFramebufferCreateInfo frameBufferCI = GenerateMultiviewFrameBufferCI( arrImageViews, vkRenderPass );
-			VkResult result = vkCreateFramebuffer( GetLogicalDevice(), &frameBufferCI, nullptr, &renderTarget.vkFrameBuffer);
-			assert( result == VK_SUCCESS );
+			for ( auto depthView : renderTarget.depthViews )
+			{
+				arrImageViews[ 3 ] = depthView;
+				VkFramebufferCreateInfo frameBufferCI = GenerateMultiviewFrameBufferCI( arrImageViews, vkRenderPass );
+				VkFramebuffer framebuffer = VK_NULL_HANDLE;
+				if ( vkCreateFramebuffer( GetLogicalDevice(), &frameBufferCI, nullptr, &framebuffer ) != VK_SUCCESS )
+					return XR_ERROR_RUNTIME_FAILURE;
+				renderTarget.framebuffers.push_back( framebuffer );
+			}
+			renderTarget.vkFrameBuffer = renderTarget.framebuffers.front();
 		}
 
 		return XR_SUCCESS; 
@@ -1799,6 +1812,9 @@ namespace xrlib
 
 	XrResult CStereoRender::RenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils )
 	{
+		if ( XR_FAILED( m_xrFrameError ) )
+			return m_xrFrameError;
+
 		XrResult result = m_pSession->StartFrame( &pRenderInfo->state.frameState );
 		if ( XR_FAILED( result ) )
 			return result;
@@ -1807,6 +1823,9 @@ namespace xrlib
 
 	bool CStereoRender::StartRenderFrame( CRenderInfo* pRenderInfo ) 
 	{
+		if ( XR_FAILED( m_xrFrameError ) )
+			return false;
+
 		if ( !XR_UNQUALIFIED_SUCCESS( m_pSession->StartFrame( &pRenderInfo->state.frameState ) ) )
 			return false;
 
@@ -1816,6 +1835,36 @@ namespace xrlib
 	XrResult CStereoRender::EndRenderFrame( const VkRenderPass renderPass, CRenderInfo *pRenderInfo, std::vector< CPlane2D * > &stencils )
 	{
 		auto &state = pRenderInfo->state;
+		state.frameLayers.clear();
+		bool colorReady = false;
+		bool depthReady = false;
+
+		// Failed frames submit no layers and must never reuse unfinished GPU resources
+		auto FailFrame = [ & ]( XrResult failure )
+		{
+			const VkResult idle = vkDeviceWaitIdle( GetLogicalDevice() );
+			if ( idle == VK_SUCCESS || idle == VK_ERROR_DEVICE_LOST )
+				state.ClearStagingBuffers();
+
+			if ( idle == VK_SUCCESS && colorReady )
+				m_pSession->ReleaseFrameImage( GetColorSwapchain() );
+			if ( idle == VK_SUCCESS && depthReady )
+				m_pSession->ReleaseFrameImage( GetDepthSwapchain() );
+
+			state.frameLayers.clear();
+			for ( auto &view : state.projectionLayerViews )
+				view.next = nullptr;
+			const XrResult endResult = m_pSession->EndFrame( &state.frameState, state.frameLayers, state.environmentBlendMode );
+			LogError( "xrvk", "Frame failed: %d, GPU idle: %d, end frame: %d", failure, idle, endResult );
+			m_xrFrameError = XR_FAILED( failure ) ? failure : XR_ERROR_RUNTIME_FAILURE;
+			return m_xrFrameError;
+		};
+		auto FailGPU = [ & ]( VkResult failure )
+		{
+			LogError( "xrvk", "Frame Vulkan operation failed: %d", failure );
+			return FailFrame( XR_ERROR_RUNTIME_FAILURE );
+		};
+		VkResult gpuResult = VK_SUCCESS;
 		// Per-eye next-chain storage must survive until xrEndFrame returns.
 		std::vector< XrCompositionLayerDepthInfoKHR > depthInfos( k_EyeCount );
 
@@ -1831,20 +1880,35 @@ namespace xrlib
 #endif
 
 			// Update eye view pose, fov, etc
-			m_pSession->UpdateEyeStates( m_vecEyeViews, state.eyeProjectionMatrices, &state.sharedEyeState, &state.frameState, m_pSession->GetAppSpace(), state.nearZ, state.farZ );
+			const XrResult viewsResult = m_pSession->UpdateEyeStates( m_vecEyeViews, state.eyeProjectionMatrices, &state.sharedEyeState, &state.frameState, m_pSession->GetAppSpace(), state.nearZ, state.farZ );
+			if ( viewsResult != XR_SUCCESS )
+				return FailFrame( viewsResult );
 
 			// DRAW CALLS
 			if ( state.sharedEyeState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT )
 			{
 				// Update Hmd pose
-				m_pSession->UpdateHmdPose( state.frameState.predictedDisplayTime );
+				const XrResult poseResult = m_pSession->UpdateHmdPose( state.frameState.predictedDisplayTime );
+				if ( poseResult != XR_SUCCESS )
+					return FailFrame( poseResult );
 				m_pSession->GetHmdPose( state.hmdPose );
 
-				// Acquire swapchain images
-				m_pSession->AcquireFrameImage( &state.unCurrentSwapchainImage_Color, &state.unCurrentSwapchainImage_Depth, GetColorSwapchain(), GetDepthSwapchain() );
+				// Wait each acquired image separately so partial acquisition can be unwound
+				XrResult imageResult = m_pSession->AcquireFrameImage( &state.unCurrentSwapchainImage_Color, GetColorSwapchain() );
+				if ( imageResult != XR_SUCCESS )
+					return FailFrame( imageResult );
+				imageResult = m_pSession->WaitForFrameImage( GetColorSwapchain(), XR_INFINITE_DURATION );
+				if ( imageResult != XR_SUCCESS )
+					return FailFrame( imageResult );
+				colorReady = true;
 
-				// Wait for swapchain images. This ensures that the openxr runtime is finish with them before we submit the draw commands to the gpu
-				m_pSession->WaitForFrameImage( GetColorSwapchain(), GetDepthSwapchain() );
+				imageResult = m_pSession->AcquireFrameImage( &state.unCurrentSwapchainImage_Depth, GetDepthSwapchain() );
+				if ( imageResult != XR_SUCCESS )
+					return FailFrame( imageResult );
+				imageResult = m_pSession->WaitForFrameImage( GetDepthSwapchain(), XR_INFINITE_DURATION );
+				if ( imageResult != XR_SUCCESS )
+					return FailFrame( imageResult );
+				depthReady = true;
 
 				// Update frame layers (eye projection views)
 				for ( uint32_t i = 0; i < k_EyeCount; i++ )
@@ -1887,7 +1951,9 @@ namespace xrlib
 				}
 
 				// Begin draw commands for rendering
-				BeginDraw( state.unCurrentSwapchainImage_Color, state.clearValues, true, renderPass );
+				gpuResult = BeginDraw( state.unCurrentSwapchainImage_Color, state.clearValues, true, renderPass, VK_SUBPASS_CONTENTS_INLINE, state.unCurrentSwapchainImage_Depth );
+				if ( gpuResult != VK_SUCCESS )
+					return FailGPU( gpuResult );
 
 				// Draw vismask (if activated)
 				if ( m_bUseVisMask && stencils.size() == 2 )
@@ -1937,7 +2003,9 @@ namespace xrlib
 				state.ClearStagingBuffers();
 				{
 					// Begin buffer recording to gpu
-					BeginBufferUpdates( state.unCurrentSwapchainImage_Color );
+					gpuResult = BeginBufferUpdates( state.unCurrentSwapchainImage_Color );
+					if ( gpuResult != VK_SUCCESS )
+						return FailGPU( gpuResult );
 
 					// Update asset buffers
 					XrTime renderTime = state.frameState.predictedDisplayTime;
@@ -1953,10 +2021,14 @@ namespace xrlib
 
 						// Add to render
 						state.vecStagingBuffers.push_back( renderable->UpdateInstancesBuffer( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkTransferCommandBuffer ) );
+						if ( !state.vecStagingBuffers.back() )
+							return FailGPU( VK_ERROR_OUT_OF_DEVICE_MEMORY );
 					}
 
 					// Submit to gpu
-					SubmitBufferUpdates( state.unCurrentSwapchainImage_Color );
+					gpuResult = SubmitBufferUpdates( state.unCurrentSwapchainImage_Color );
+					if ( gpuResult != VK_SUCCESS )
+						return FailGPU( gpuResult );
 				}
 
 				//  Main rendering subpass: Draw render assets
@@ -1967,10 +2039,19 @@ namespace xrlib
 				}
 				
 				// Submit draw calls to gpu - this will also clear the staging buffers (if any)
-				SubmitDraw( state.unCurrentSwapchainImage_Color, state.vecStagingBuffers );
+				gpuResult = SubmitDraw( state.unCurrentSwapchainImage_Color, state.vecStagingBuffers );
+				if ( gpuResult != VK_SUCCESS )
+					return FailGPU( gpuResult );
 
 				// Release the swapchian image to let the openxr runtime know we're through with it
-				m_pSession->ReleaseFrameImage( GetColorSwapchain(), GetDepthSwapchain() );
+				imageResult = m_pSession->ReleaseFrameImage( GetColorSwapchain() );
+				colorReady = false;
+				if ( imageResult != XR_SUCCESS )
+					return FailFrame( imageResult );
+				imageResult = m_pSession->ReleaseFrameImage( GetDepthSwapchain() );
+				depthReady = false;
+				if ( imageResult != XR_SUCCESS )
+					return FailFrame( imageResult );
 			}
 
 			// Assemble frame layers
@@ -2016,24 +2097,27 @@ namespace xrlib
 					LogError( "RENDERDOC", "FAILED FRAME CAPTURE for frame: %i", rdoc_api->GetNumCaptures() + 1 );
 			}
 		#endif
+			if ( XR_FAILED( result ) )
+				m_xrFrameError = result;
 			return result;
 	}
 
-	void CStereoRender::BeginDraw(
+	VkResult CStereoRender::BeginDraw(
 		const uint32_t unSwpachainImageIndex,
 		std::vector< VkClearValue > &vecClearValues,
 		const bool startCommandBufferRecording,
 		const VkRenderPass renderpass,
-		const VkSubpassContents subpass)
+		const VkSubpassContents subpass,
+		const uint32_t unDepthImageIndex )
 	{
-		// @todo - debug assert swapchain image index vs size of render targets
+		if ( unSwpachainImageIndex >= m_vecMultiviewRenderTargets.size() || ( renderpass && unDepthImageIndex >= m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].framebuffers.size() ) )
+			return VK_ERROR_INITIALIZATION_FAILED;
 
 		if ( startCommandBufferRecording )
 		{
 			// Set command buffer to recording
 			VkCommandBufferBeginInfo cmdBeginInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-			vkBeginCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, &cmdBeginInfo );
-			// @todo assert on VkResult for debug only
+			VK_CHECK_RETURN( vkBeginCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, &cmdBeginInfo ) );
 		}
 
 		if ( renderpass != VK_NULL_HANDLE )
@@ -2043,30 +2127,32 @@ namespace xrlib
 			renderPassBeginInfo.clearValueCount = (uint32_t) vecClearValues.size();
 			renderPassBeginInfo.pClearValues = vecClearValues.data();
 			renderPassBeginInfo.renderPass = renderpass;
-			renderPassBeginInfo.framebuffer = m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkFrameBuffer;
+			renderPassBeginInfo.framebuffer = m_vecMultiviewRenderTargets.at( unSwpachainImageIndex ).framebuffers.at( unDepthImageIndex );
 			renderPassBeginInfo.renderArea.offset = { 0, 0 };
 			renderPassBeginInfo.renderArea.extent = GetTextureExtent();
 
 			// Start render pass
 			vkCmdBeginRenderPass( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, &renderPassBeginInfo, subpass );
 		}
+		return VK_SUCCESS;
 	}
 
-	void CStereoRender::SubmitDraw(
+	VkResult CStereoRender::SubmitDraw(
 		const uint32_t unSwpachainImageIndex,
 		std::vector< CDeviceBuffer * > &vecStagingBuffers,
 		const uint32_t timeoutNs,
-		const VkCommandBufferResetFlags transferBufferResetFlags, const VkCommandBufferResetFlags renderBufferResetFlags ) 
+		const VkCommandBufferResetFlags transferBufferResetFlags,
+		const VkCommandBufferResetFlags renderBufferResetFlags )
 	{
 		// End render recording
 		vkCmdEndRenderPass( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer );
-		vkEndCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer );
+		VK_CHECK_RETURN( vkEndCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer ) );
 
 		// Wait for any data transfer operations to finish
 		// @todo start recording for next frame
-		vkWaitForFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence, VK_TRUE, timeoutNs );
-		vkResetFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence );
-		vkResetCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, transferBufferResetFlags );
+		VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence, VK_TRUE, timeoutNs ) );
+		VK_CHECK_RETURN( vkResetFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence ) );
+		VK_CHECK_RETURN( vkResetCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, transferBufferResetFlags ) );
 
 		// Clear/free staging buffer memory
 		for ( CDeviceBuffer *pStagingBuffer : vecStagingBuffers )
@@ -2079,32 +2165,40 @@ namespace xrlib
 		VkSubmitInfo submitInfo { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer;
-		vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Graphics(), 1, &submitInfo, m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence );
+		VK_CHECK_RETURN( vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Graphics(), 1, &submitInfo, m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence ) );
 
 		// Wait for rendering to finish
 		// @todo move to separate thread - or at start unSwapchainIndex from prior frame
-		vkWaitForFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence, VK_TRUE, timeoutNs );
-		vkResetFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence );
-		vkResetCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, renderBufferResetFlags );
+		VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence, VK_TRUE, timeoutNs ) );
+		VK_CHECK_RETURN( vkResetFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence ) );
+		VK_CHECK_RETURN( vkResetCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, renderBufferResetFlags ) );
+		return VK_SUCCESS;
 	}
 
-	void CStereoRender::BeginBufferUpdates( const uint32_t unSwpachainImageIndex ) 
+	VkResult CStereoRender::BeginBufferUpdates( const uint32_t unSwpachainImageIndex )
 	{ 
 		VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-		vkBeginCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, &beginInfo );
+		VK_CHECK_RETURN( vkBeginCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, &beginInfo ) );
+		return VK_SUCCESS;
 	}
 
-	void CStereoRender::SubmitBufferUpdates( const uint32_t unSwpachainImageIndex ) 
+	VkResult CStereoRender::SubmitBufferUpdates( const uint32_t unSwpachainImageIndex )
 	{
-		vkEndCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer );
+		VkMemoryBarrier barrier { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+		vkCmdPipelineBarrier( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr );
+
+		VK_CHECK_RETURN( vkEndCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer ) );
 
 		VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer;
 
-		vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Transfer(), 1, &submitInfo, m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence );
+		VK_CHECK_RETURN( vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Graphics(), 1, &submitInfo, m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence ) );
+		return VK_SUCCESS;
 	}
 
 	void CStereoRender::CalculateViewMatrices( std::array< XrMatrix4x4f, 2 > &outViewMatrices, const XrVector3f *eyeScale ) 

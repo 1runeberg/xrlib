@@ -58,17 +58,28 @@ namespace xrlib
 
 	uint32_t CRenderable::AddInstance( uint32_t unCount, XrVector3f scale )
 	{
-		for ( size_t i = 0; i < unCount; i++ )
+		if ( unCount == 0 )
+			return GetInstanceCount();
+
+		auto newInstances = instances;
+		auto newMatrices = instanceMatrices;
+		for ( uint32_t i = 0; i < unCount; ++i )
 		{
-			instances.push_back( SInstanceState( scale ) );
-			instanceMatrices.push_back( XrMatrix4x4f() );
+			newInstances.emplace_back( scale );
+			XrMatrix4x4f matrix;
+			XrMatrix4x4f_CreateTranslationRotationScale( &matrix, &newInstances.back().pose.position, &newInstances.back().pose.orientation, &scale );
+			newMatrices.push_back( matrix );
 		}
 
-		if ( m_pInstanceBuffer )
-			delete m_pInstanceBuffer;
+		auto pBuffer = std::make_unique< CDeviceBuffer >( m_pSession );
+		const VkResult result = InitBuffer( pBuffer.get(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, sizeof( XrMatrix4x4f ) * newMatrices.size(), newMatrices.data() );
+		if ( result != VK_SUCCESS )
+			throw std::runtime_error( "Failed to grow instance buffer" );
 
-		m_pInstanceBuffer = new CDeviceBuffer( m_pSession );
-		assert( InitBuffer( m_pInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( XrMatrix4x4f ) * instanceMatrices.size(), nullptr ) == VK_SUCCESS );
+		delete m_pInstanceBuffer;
+		m_pInstanceBuffer = pBuffer.release();
+		instances.swap( newInstances );
+		instanceMatrices.swap( newMatrices );
 
 		return GetInstanceCount();
 	}
@@ -92,7 +103,12 @@ namespace xrlib
 
 		// Create staging buffer
 		CDeviceBuffer *pStagingBuffer = new CDeviceBuffer( m_pSession );
-		pStagingBuffer->Init( VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, bufferSize, instanceMatrices.data() );
+		const VkResult result = pStagingBuffer->Init( VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, bufferSize, instanceMatrices.data() );
+		if ( result != VK_SUCCESS )
+		{
+			delete pStagingBuffer;
+			return nullptr;
+		}
 
 		// Copy buffer
 		VkBufferCopy bufferCopyRegion = {};
@@ -160,6 +176,9 @@ namespace xrlib
 
 	CRenderInfo::~CRenderInfo() 
 	{
+		vkDeviceWaitIdle( m_device );
+		state.ClearStagingBuffers();
+
 		if ( pSceneLightingBuffer )
 			delete pSceneLightingBuffer;
 
