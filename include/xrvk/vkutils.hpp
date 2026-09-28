@@ -60,6 +60,7 @@ namespace vkutils
 		uint32_t height;
 		VkFormat format;
 		std::span< const SImageMip > mips {}; // Empty for a single-level image
+		uint32_t layers = 1;				  // Each mip contains tightly packed array layers
 	};
 
 

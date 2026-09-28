@@ -10,6 +10,9 @@ layout(set=0,binding=2) uniform sampler2D metallicRoughnessMap;
 layout(set=0,binding=3) uniform sampler2D normalMap;
 layout(set=0,binding=4) uniform sampler2D emissiveMap;
 layout(set=0,binding=5) uniform sampler2D occlusionMap;
+layout(set=1,binding=1) uniform samplerCube diffuseEnvironment;
+layout(set=1,binding=2) uniform samplerCube specularEnvironment;
+layout(set=1,binding=3) uniform sampler2D environmentBRDF;
 layout(location=0) in vec3 inWorldPos;
 layout(location=1) in vec2 inUV;
 layout(location=2) in vec3 inNormal;
@@ -110,6 +113,10 @@ vec3 displayColor(vec3 linearColor) {
     // SRGB render targets encode once in hardware. Gamma remains available for UNORM targets
     return scene.outputSRGB!=0u ? color : gammaCorrect(color,scene.tonemapping.gamma);
 }
+vec3 environmentDirection(vec3 direction) {
+    float c=cos(scene.environmentRotation), s=sin(scene.environmentRotation);
+    return vec3(c*direction.x-s*direction.z,direction.y,s*direction.x+c*direction.z);
+}
 void main() {
     uint flags=material.textureFlags;
     uint mode=(scene.tonemapping.tonemap >> 4)&15u;
@@ -138,8 +145,8 @@ void main() {
             ao=mix(1.0,texture(occlusionMap,textureUV(TEXTURE_OCCLUSION_BIT)).r,clamp(material.occlusionStrength,0.0,1.0));
     } else metallic=0.0;
     metallic=clamp(metallic,0.0,1.0);
-    roughness=clamp(roughness,0.045,1.0);
-    float alpha=roughness*roughness;
+    roughness=clamp(roughness,0.0,1.0);
+    float alpha=pow(max(roughness,0.045),2.0);
     float alphaSquared=alpha*alpha;
     vec3 F0=mix(vec3(0.04),base.rgb,metallic);
     vec3 color=directLight(N,V,NoV,safeNormalize(-scene.mainLight.direction),scene.mainLight.color*scene.mainLight.intensity,base.rgb,F0,metallic,alphaSquared,mode);
@@ -161,10 +168,18 @@ void main() {
         color+=directLight(N,V,NoV,L,radiance,base.rgb,F0,metallic,alphaSquared,mode);
     }
 
-    // Ambient is diffuse irradiance. Real specular IBL needs an environment map;
-    // a made-up sky gradient is not a reflection of the user's surroundings
+    // Constant ambient remains available independently of environment lighting
     vec3 diffuseWeight=mode==2u ? (1.0-fresnelSchlick(NoV,F0))*(1.0-metallic) : vec3(1);
     color+=diffuseWeight*base.rgb*scene.ambientColor*scene.ambientIntensity*ao/PI;
+    if (mode==2u && scene.environmentIntensity>0.0) {
+        vec3 irradiance=texture(diffuseEnvironment,environmentDirection(N)).rgb;
+        vec3 reflection=environmentDirection(reflect(-V,N));
+        vec3 radiance=textureLod(specularEnvironment,reflection,roughness*scene.environmentMaxLod).rgb;
+        vec2 brdf=texture(environmentBRDF,vec2(NoV,roughness)).rg;
+        vec3 specularWeight=F0*brdf.x+brdf.y;
+        vec3 diffuseIBL=(1.0-specularWeight)*(1.0-metallic)*base.rgb*irradiance;
+        color+=(diffuseIBL+radiance*specularWeight)*scene.environmentIntensity*ao;
+    }
     vec3 emissive=material.emissiveFactor.rgb;
     if ((flags & TEXTURE_EMISSIVE_BIT)!=0u) {
         vec3 sampled=texture(emissiveMap,textureUV(TEXTURE_EMISSIVE_BIT)).rgb;

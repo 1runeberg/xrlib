@@ -170,6 +170,7 @@ namespace xrlib
 	{ 
 		assert( pSession );
 
+		m_pSession = pSession;
 		m_device = pSession->GetVulkan()->GetVkLogicalDevice();
 		pDescriptors = new CDescriptorManager( pSession );
 	}
@@ -222,6 +223,33 @@ namespace xrlib
 		return vecRenderables.size() - 1;
 	}
 
+	VkResult CRenderInfo::SetEnvironment( std::shared_ptr< CEnvironmentLighting > environment, float intensity, float rotation )
+	{
+		if ( !pSceneLighting || !sceneLightingDescriptor || !std::isfinite( intensity ) || intensity < 0.f || !std::isfinite( rotation ) )
+			return VK_ERROR_INITIALIZATION_FAILED;
+		auto selected = environment ? environment : m_pDefaultEnvironment;
+		if ( !selected || !selected->IsReady() || selected->GetDevice() != m_device )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		const auto &images = selected->GetDescriptors();
+		std::array< VkWriteDescriptorSet, 3 > writes {};
+		for ( uint32_t i = 0; i < writes.size(); ++i )
+		{
+			writes[ i ].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writes[ i ].dstSet = sceneLightingDescriptor;
+			writes[ i ].dstBinding = i + 1;
+			writes[ i ].descriptorCount = 1;
+			writes[ i ].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			writes[ i ].pImageInfo = &images[ i ];
+		}
+		vkUpdateDescriptorSets( m_device, uint32_t( writes.size() ), writes.data(), 0, nullptr );
+		pSceneLighting->environmentIntensity = environment ? intensity : 0.f;
+		pSceneLighting->environmentRotation = rotation;
+		pSceneLighting->environmentMaxLod = selected->GetMaxLod();
+		m_pEnvironment = std::move( selected );
+		return VK_SUCCESS;
+	}
+
 	void CRenderInfo::SetupSceneLighting() 
 	{
 		assert( pDescriptors );
@@ -271,6 +299,27 @@ namespace xrlib
 
 		assert( result == VK_SUCCESS && sceneLightingSets.size() == 1 );
 		sceneLightingDescriptor = sceneLightingSets[ 0 ];
+
+		// Valid fallback images are required even while the shader's IBL branch is disabled
+		auto *pVulkan = m_pSession->GetVulkan();
+		VkCommandPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+		poolInfo.queueFamilyIndex = pVulkan->GetVkQueueIndex_GraphicsFamily();
+		poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+		VkCommandPool pool = VK_NULL_HANDLE;
+		VK_CHECK_RESULT( vkCreateCommandPool( m_device, &poolInfo, nullptr, &pool ) );
+		m_pDefaultEnvironment = std::make_shared< CEnvironmentLighting >();
+		try
+		{
+			result = m_pDefaultEnvironment->Init( m_device, pVulkan->GetVkPhysicalDevice(), pool, pVulkan->GetVkQueue_Graphics(), CEnvironmentLighting::DisabledData() );
+		}
+		catch ( ... )
+		{
+			vkDestroyCommandPool( m_device, pool, nullptr );
+			throw;
+		}
+		vkDestroyCommandPool( m_device, pool, nullptr );
+		VK_CHECK_RESULT( result );
+		VK_CHECK_RESULT( SetEnvironment( nullptr ) );
 
 		// Update descriptor to point to the buffer
 		std::vector< VkDescriptorSet > descriptors = { sceneLightingDescriptor };

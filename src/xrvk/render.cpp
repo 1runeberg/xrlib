@@ -1750,13 +1750,17 @@ namespace xrlib
 		VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorPool( outPipelines.pbrFragmentDescriptorPool, outPipelines.pbrFragmentDescriptorLayout, poolCount ) );
 
 		// Setup lighting descriptors
-		VkDescriptorPoolSize lightingPoolSize { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 };
+		std::array< VkDescriptorPoolSize, 2 > lightingPoolSizes { VkDescriptorPoolSize { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 }, VkDescriptorPoolSize { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 } };
 
-		VkDescriptorPoolCreateInfo lightingPoolInfo { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &lightingPoolSize };
+		VkDescriptorPoolCreateInfo lightingPoolInfo { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 1, .poolSizeCount = uint32_t( lightingPoolSizes.size() ), .pPoolSizes = lightingPoolSizes.data() };
 
 		VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorPool( pRenderInfo->lightingPoolId, lightingPoolInfo ) );
 
-		std::vector< SDescriptorBinding > lightingBindings = { { 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT } };
+		std::vector< SDescriptorBinding > lightingBindings = {
+			{ 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT },
+			{ 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT },
+			{ 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT },
+			{ 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT } };
 
 		VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorSetLayout( pRenderInfo->lightingLayoutId, lightingBindings ) );
 

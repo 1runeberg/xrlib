@@ -24,8 +24,8 @@
 
 #include <xrvk/buffer.hpp>
 #include <xrvk/descriptors.hpp>
+#include <xrvk/environment.hpp>
 #include <xrvk/lighting.hpp>
-
 
 namespace xrlib
 {
@@ -169,6 +169,10 @@ namespace xrlib
 
 		void SetupSceneLighting();
 
+		// Earlier GPU reads must have completed before changing environment descriptors
+		// Shared ownership keeps images alive, nullptr disables IBL without changing direct/ambient light
+		VkResult SetEnvironment( std::shared_ptr< CEnvironmentLighting > environment, float intensity = 1.f, float rotation = 0.f );
+
 		// For descriptor management
 		CDescriptorManager *pDescriptors = nullptr;
 
@@ -251,7 +255,9 @@ namespace xrlib
 
 	  private:
 		VkDevice m_device = VK_NULL_HANDLE;
-
+		CSession *m_pSession = nullptr;
+		std::shared_ptr< CEnvironmentLighting > m_pDefaultEnvironment;
+		std::shared_ptr< CEnvironmentLighting > m_pEnvironment;
 	};
 
 } // namespace xrlib
