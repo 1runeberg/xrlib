@@ -16,7 +16,7 @@ layout(location=2) in vec3 inNormal;
 layout(location=3) in vec3 inTangent;
 layout(location=4) in vec3 inBitangent;
 layout(location=5) in vec3 inViewDirection;
-layout(location=6) in vec3 inColor;
+layout(location=6) in vec4 inColor;
 layout(location=7) in vec2 inUV1;
 layout(location=0) out vec4 outColor;
 
@@ -113,7 +113,7 @@ void main() {
     uint flags=material.textureFlags;
     uint mode=(scene.tonemapping.tonemap >> 4)&15u;
     uint alphaMode=(flags >> 24)&3u;
-    vec4 base=material.baseColorFactor*vec4(inColor,1);
+    vec4 base=material.baseColorFactor*inColor;
     if ((flags & TEXTURE_BASE_COLOR_BIT)!=0u) {
         vec4 sampled=texture(baseColorMap,textureUV(TEXTURE_BASE_COLOR_BIT));
         if ((flags & TEXTURE_BASE_COLOR_SRGB_BIT)==0u) sampled.rgb=srgbToLinear(sampled.rgb);

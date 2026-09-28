@@ -55,6 +55,7 @@ namespace xrlib
 		XrVector2f uv0;		// Base color, metallic-roughness, normal maps
 		XrVector2f uv1;		// Additional texture coordinates if needed
 		XrVector3f color0;
+		float colorAlpha = 1.f; // Kept separate so existing RGB vertex assignments remain valid
 		uint32_t joints[ JOINT_INFLUENCE_COUNT ] = { 0, 0, 0, 0 };
 		float weights[ JOINT_INFLUENCE_COUNT ] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	};
