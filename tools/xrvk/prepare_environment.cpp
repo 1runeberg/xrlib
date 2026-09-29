@@ -32,4 +32,17 @@ namespace xrlib::tools
 		std::cout << "Prepared environment: " << output.string() << '\n';
 		return 0;
 	}
+
+	int PrepareBackground( std::span< char *const > args )
+	{
+		const Options options = ParseArguments( args, { "--source", "--output" }, {} );
+		const std::vector< uint8_t > source = ReadFile( Required( options, "--source" ) );
+		const std::vector< uint8_t > bytes = EncodeBackground( PrepareBackgroundHDR( source ) );
+
+		const std::filesystem::path output = Required( options, "--output" );
+		WriteFile( output, bytes );
+
+		std::cout << "Prepared background: " << output.string() << '\n';
+		return 0;
+	}
 } // namespace xrlib::tools

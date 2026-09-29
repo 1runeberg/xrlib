@@ -51,6 +51,20 @@ namespace xrlib
 	// Checks image sizes, mip levels and pixel counts before encoding or upload
 	bool IsValidEnvironment( const SEnvironmentData &data );
 
+	// Visible backdrop in the same equirectangular orientation as the baked lighting
+	// Pixels are linear RGB packed as VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, rows from north to south
+	struct SEnvironmentBackground
+	{
+		uint32_t width = 0;
+		uint32_t height = 0;
+		std::vector< uint32_t > pixels;
+	};
+
+	SEnvironmentBackground PrepareBackground( std::span< const float > rgb, uint32_t width, uint32_t height );
+	SEnvironmentBackground PrepareBackgroundHDR( std::span< const uint8_t > encodedHDR );
+	std::vector< uint8_t > EncodeBackground( const SEnvironmentBackground &background );
+	SEnvironmentBackground DecodeBackground( std::span< const uint8_t > bytes );
+
 	class CEnvironmentLighting
 	{
 	  public:
