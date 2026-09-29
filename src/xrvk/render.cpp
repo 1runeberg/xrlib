@@ -2083,27 +2083,54 @@ namespace xrlib
 						return FailGPU( gpuResult );
 				}
 
-				// Opaque geometry first, then transparent sections across models and instances
-				std::vector< SMaterialDraw > draws;
-				std::vector< CRenderable * > customDraws;
+				// Background, opaque, transparent back to front, then post scene in list order
+				std::vector< SMaterialDraw > sections;
+				std::vector< SQueuedDraw > draws;
 				const auto commands = GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer;
 				for ( auto *renderable : pRenderInfo->vecRenderables )
 				{
 					if ( !renderable->isVisible )
 						continue;
+
 					auto *model = dynamic_cast< CRenderModel * >( renderable );
 					if ( model && !model->materialSections.empty() && pRenderInfo->materialPipelines.contains( model->graphicsPipelineIndex ) )
-						model->CollectDraws( draws, *pRenderInfo );
-					else
-						customDraws.push_back( renderable );
-				}
-				std::stable_sort( draws.begin(), draws.end(), []( const auto &a, const auto &b ) { return a.blend != b.blend ? !a.blend : ( a.blend && a.depth > b.depth ); } );
-				for ( const auto &draw : draws )
-					draw.pModel->DrawSection( commands, *pRenderInfo, draw.section, draw.instance );
+					{
+						sections.clear();
+						model->CollectDraws( sections, *pRenderInfo );
+						for ( const auto &section : sections )
+							draws.push_back( { model, section.section, section.instance, section.depth, section.blend ? ERenderQueue::Transparent : ERenderQueue::Opaque } );
 
-				// Caller-defined pipelines retain their ordering after the material passes
-				for ( auto *renderable : customDraws )
-					renderable->Draw( commands, *pRenderInfo );
+						continue;
+					}
+
+					// Custom renderables draw every instance at once, so sort by their average origin
+					float depth = 0.f;
+					if ( renderable->renderQueue == ERenderQueue::Transparent && !renderable->instanceMatrices.empty() )
+					{
+						XrVector3f centre {};
+						for ( const auto &matrix : renderable->instanceMatrices )
+							centre = { centre.x + matrix.m[ 12 ], centre.y + matrix.m[ 13 ], centre.z + matrix.m[ 14 ] };
+
+						const float count = static_cast< float >( renderable->instanceMatrices.size() );
+						centre = { centre.x / count, centre.y / count, centre.z / count };
+
+						XrVector3f left, right;
+						XrMatrix4x4f_TransformVector3f( &left, &state.eyeViewMatrices[ k_Left ], &centre );
+						XrMatrix4x4f_TransformVector3f( &right, &state.eyeViewMatrices[ k_Right ], &centre );
+						depth = -( left.z + right.z ) * .5f;
+					}
+
+					draws.push_back( { renderable, UINT32_MAX, UINT32_MAX, depth, renderable->renderQueue } );
+				}
+
+				SortQueuedDraws( draws );
+				for ( const auto &draw : draws )
+				{
+					if ( draw.section == UINT32_MAX )
+						draw.pRenderable->Draw( commands, *pRenderInfo );
+					else
+						static_cast< CRenderModel * >( draw.pRenderable )->DrawSection( commands, *pRenderInfo, draw.section, draw.instance );
+				}
 
 				// Submit draw calls to gpu - this will also clear the staging buffers (if any)
 				gpuResult = SubmitDraw( state.unCurrentSwapchainImage_Color, state.vecStagingBuffers );

@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -51,11 +52,46 @@ namespace xrlib
 		~SInstanceState() {}
 	};
 
+	// Frame order for renderables, material pipelines pick Opaque or Transparent from each section's alpha mode
+	// Queues set draw order only, each pipeline keeps its own depth and blend state
+	enum class ERenderQueue : uint8_t
+	{
+		Background,	 // List order before scene geometry, pipelines usually skip depth writes
+		Opaque,		 // With opaque material sections
+		Transparent, // Sorted back to front with blended material sections
+		PostScene	 // List order after scene geometry, the default for custom pipelines
+	};
+
+	class CRenderable;
+
+	// A whole renderable or one material section, in the order EndRenderFrame records it
+	struct SQueuedDraw
+	{
+		CRenderable *pRenderable;
+		uint32_t section;  // UINT32_MAX draws the whole renderable
+		uint32_t instance; // UINT32_MAX draws every instance
+		float depth;	   // View distance, only Transparent draws are sorted by it
+		ERenderQueue queue;
+	};
+
+	// Stable, so draws keep list order within Background, Opaque and PostScene
+	inline void SortQueuedDraws( std::vector< SQueuedDraw > &draws )
+	{
+		std::stable_sort( draws.begin(), draws.end(), []( const SQueuedDraw &a, const SQueuedDraw &b )
+		{
+			if ( a.queue != b.queue )
+				return a.queue < b.queue;
+
+			return a.queue == ERenderQueue::Transparent && a.depth > b.depth;
+		} );
+	}
+
 	struct CRenderInfo;
 	class CRenderable
 	{
 	  public:
 		bool isVisible = true;
+		ERenderQueue renderQueue = ERenderQueue::PostScene; // Custom pipelines only
 		uint16_t pipelineLayoutIndex = 0;
 		uint16_t graphicsPipelineIndex = 0;
 		uint32_t descriptorLayoutIndex = 0;
