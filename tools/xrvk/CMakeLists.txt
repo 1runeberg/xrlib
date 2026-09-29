@@ -36,6 +36,7 @@ add_executable(xrvk-tools
     tool_utils.cpp
     tools.hpp
     "${XRVK_TOOLS_XRLIB}/src/xrvk/environment_bake.cpp"
+    "${XRVK_TOOLS_XRLIB}/src/xrvk/night_grid.cpp"
 )
 
 target_compile_features(xrvk-tools PRIVATE cxx_std_20)
