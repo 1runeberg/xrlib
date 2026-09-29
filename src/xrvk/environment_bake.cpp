@@ -45,6 +45,43 @@ namespace xrlib
 			return uint16_t( ( uint32_t( exponent ) << 10 ) + ( rounded >> 13 ) );
 		}
 
+		// Shared exponent packing from the Vulkan E5B9G9R9 conversion rules
+		uint32_t PackE5B9G9R9( V value )
+		{
+			constexpr int mantissaBits = 9, bias = 15, maxExponent = 31;
+			static constexpr float maxValue = float( ( 1 << mantissaBits ) - 1 ) / ( 1 << mantissaBits ) * float( 1 << ( maxExponent - bias ) );
+			auto Clamp = []( float channel ) { return std::isfinite( channel ) ? std::clamp( channel, 0.f, maxValue ) : 0.f; };
+
+			const float r = Clamp( value.x ), g = Clamp( value.y ), b = Clamp( value.z );
+			const float largest = std::max( { r, g, b } );
+			if ( largest <= 0.f )
+				return 0;
+
+			int exponent = std::max( -bias - 1, int( std::floor( std::log2( largest ) ) ) ) + 1 + bias;
+			float scale = std::exp2( float( exponent - bias - mantissaBits ) );
+			if ( int( std::floor( largest / scale + .5f ) ) == 1 << mantissaBits )
+			{
+				scale *= 2.f;
+				++exponent;
+			}
+
+			auto Mantissa = [ & ]( float channel ) { return uint32_t( std::floor( channel / scale + .5f ) ); };
+			return Mantissa( r ) | Mantissa( g ) << 9 | Mantissa( b ) << 18 | uint32_t( exponent ) << 27;
+		}
+
+		std::unique_ptr< float, decltype( &stbi_image_free ) > DecodeHDR( std::span< const uint8_t > encodedHDR, int &outWidth, int &outHeight )
+		{
+			if ( encodedHDR.empty() || encodedHDR.size() > INT32_MAX || !stbi_is_hdr_from_memory( encodedHDR.data(), int( encodedHDR.size() ) ) )
+				throw std::invalid_argument( "Expected a Radiance HDR environment" );
+
+			int channels = 0;
+			std::unique_ptr< float, decltype( &stbi_image_free ) > pixels( stbi_loadf_from_memory( encodedHDR.data(), int( encodedHDR.size() ), &outWidth, &outHeight, &channels, 3 ), stbi_image_free );
+			if ( !pixels || outWidth <= 0 || outHeight <= 0 )
+				throw std::invalid_argument( "Couldn't decode HDR environment" );
+
+			return pixels;
+		}
+
 		void Append( std::vector< uint16_t > &pixels, V value ) { pixels.insert( pixels.end(), { Half( value.x ), Half( value.y ), Half( value.z ), Half( 1.f ) } ); }
 
 		float RadicalInverse( uint32_t bits )
@@ -209,13 +246,8 @@ namespace xrlib
 
 	SEnvironmentData BakeEnvironmentHDR( std::span< const uint8_t > encodedHDR, const SEnvironmentBakeConfig &config )
 	{
-		if ( encodedHDR.empty() || encodedHDR.size() > INT32_MAX || !stbi_is_hdr_from_memory( encodedHDR.data(), int( encodedHDR.size() ) ) )
-			throw std::invalid_argument( "Expected a Radiance HDR environment" );
-
-		int width = 0, height = 0, channels = 0;
-		std::unique_ptr< float, decltype( &stbi_image_free ) > pixels( stbi_loadf_from_memory( encodedHDR.data(), int( encodedHDR.size() ), &width, &height, &channels, 3 ), stbi_image_free );
-		if ( !pixels || width <= 0 || height <= 0 )
-			throw std::invalid_argument( "Couldn't decode HDR environment" );
+		int width = 0, height = 0;
+		const auto pixels = DecodeHDR( encodedHDR, width, height );
 		return BakeEnvironment( { pixels.get(), size_t( width ) * height * 3 }, width, height, config );
 	}
 
@@ -276,6 +308,76 @@ namespace xrlib
 		if ( offset != bytes.size() || !IsValidEnvironment( data ) )
 			throw std::invalid_argument( "Invalid environment image layout" );
 		return data;
+	}
+
+	SEnvironmentBackground PrepareBackground( std::span< const float > rgb, uint32_t width, uint32_t height )
+	{
+		if ( !width || !height || rgb.size() != size_t( width ) * height * 3 )
+			throw std::invalid_argument( "Invalid background image" );
+
+		SEnvironmentBackground background { width, height, {} };
+		background.pixels.resize( size_t( width ) * height );
+		for ( size_t i = 0; i < background.pixels.size(); ++i )
+			background.pixels[ i ] = PackE5B9G9R9( { rgb[ i * 3 ], rgb[ i * 3 + 1 ], rgb[ i * 3 + 2 ] } );
+
+		return background;
+	}
+
+	SEnvironmentBackground PrepareBackgroundHDR( std::span< const uint8_t > encodedHDR )
+	{
+		int width = 0, height = 0;
+		const auto pixels = DecodeHDR( encodedHDR, width, height );
+		return PrepareBackground( { pixels.get(), size_t( width ) * height * 3 }, uint32_t( width ), uint32_t( height ) );
+	}
+
+	std::vector< uint8_t > EncodeBackground( const SEnvironmentBackground &background )
+	{
+		if ( !background.width || !background.height || background.pixels.size() != size_t( background.width ) * background.height )
+			throw std::invalid_argument( "Invalid background image" );
+
+		std::vector< uint8_t > bytes { 'X', 'R', 'V', 'K', 'S', 'K', 'Y', '1' };
+		auto AppendInteger = [ & ]( uint32_t value )
+		{
+			for ( uint32_t i = 0; i < 4; ++i )
+				bytes.push_back( uint8_t( value >> ( 8 * i ) ) );
+		};
+
+		AppendInteger( background.width );
+		AppendInteger( background.height );
+		for ( uint32_t pixel : background.pixels )
+			AppendInteger( pixel );
+
+		return bytes;
+	}
+
+	SEnvironmentBackground DecodeBackground( std::span< const uint8_t > bytes )
+	{
+		constexpr std::array< uint8_t, 8 > magic { 'X', 'R', 'V', 'K', 'S', 'K', 'Y', '1' };
+		if ( bytes.size() < magic.size() + 8 || !std::equal( magic.begin(), magic.end(), bytes.begin() ) )
+			throw std::invalid_argument( "Invalid background payload" );
+
+		size_t offset = magic.size();
+		auto ReadInteger = [ & ]()
+		{
+			uint32_t value = 0;
+			for ( uint32_t i = 0; i < 4; ++i )
+				value |= uint32_t( bytes[ offset++ ] ) << ( 8 * i );
+			return value;
+		};
+
+		SEnvironmentBackground background;
+		background.width = ReadInteger();
+		background.height = ReadInteger();
+
+		const uint64_t count = uint64_t( background.width ) * background.height;
+		if ( !count || count != ( bytes.size() - offset ) / 4 || ( bytes.size() - offset ) % 4 )
+			throw std::invalid_argument( "Invalid background image layout" );
+
+		background.pixels.resize( size_t( count ) );
+		for ( auto &pixel : background.pixels )
+			pixel = ReadInteger();
+
+		return background;
 	}
 
 	SEnvironmentData CEnvironmentLighting::DisabledData()

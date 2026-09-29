@@ -25,6 +25,7 @@ namespace xrlib::tools
 	// Subcommands receive the arguments after their name and return the process exit code
 	int PrepareGltf( std::span< char *const > args );
 	int PrepareEnvironment( std::span< char *const > args );
+	int PrepareBackground( std::span< char *const > args );
 
 	// Value options take the following argument, switches are stored with an empty value
 	Options ParseArguments( std::span< char *const > args, std::initializer_list< std::string_view > values, std::initializer_list< std::string_view > switches );
