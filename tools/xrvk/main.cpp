@@ -26,6 +26,9 @@ int main( int argc, char **argv )
 
 		if ( command == "background" )
 			return xrlib::tools::PrepareBackground( args );
+
+		if ( command == "night-grid" )
+			return xrlib::tools::PrepareNightGrid( args );
 	}
 	catch ( const std::exception &error )
 	{
@@ -40,6 +43,9 @@ int main( int argc, char **argv )
 				 "      --diffuse-size n --specular-size n --lut-size n --samples n\n"
 				 "      Bakes image based lighting from an equirectangular Radiance HDR\n"
 				 "  xrvk-tools background --source environment.hdr --output environment.sky\n"
-				 "      Packs an equirectangular Radiance HDR as an E5B9G9R9 backdrop\n";
+				 "      Packs an equirectangular Radiance HDR as an E5B9G9R9 backdrop\n"
+				 "  xrvk-tools night-grid --ibl night_grid.ibl --sky night_grid.sky --width n --floor-size metres\n"
+				 "      --diffuse-size n --specular-size n --lut-size n --samples n\n"
+				 "      Bakes the procedural night grid's lighting and visible sky\n";
 	return 1;
 }

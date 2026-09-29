@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -99,6 +100,26 @@ namespace xrlib::tools
 			throw std::invalid_argument( "Expected a positive integer, got " + std::string( text ) );
 
 		return value;
+	}
+
+	float ParsePositiveFloat( std::string_view text )
+	{
+		const std::string value( text );
+		size_t parsed = 0;
+		float result = 0.f;
+		try
+		{
+			result = std::stof( value, &parsed );
+		}
+		catch ( const std::exception & )
+		{
+			parsed = 0;
+		}
+
+		if ( parsed != value.size() || !std::isfinite( result ) || result <= 0.f )
+			throw std::invalid_argument( "Expected a positive number, got " + value );
+
+		return result;
 	}
 
 	std::vector< uint8_t > ReadFile( const std::filesystem::path &path )

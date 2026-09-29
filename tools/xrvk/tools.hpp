@@ -26,11 +26,13 @@ namespace xrlib::tools
 	int PrepareGltf( std::span< char *const > args );
 	int PrepareEnvironment( std::span< char *const > args );
 	int PrepareBackground( std::span< char *const > args );
+	int PrepareNightGrid( std::span< char *const > args );
 
 	// Value options take the following argument, switches are stored with an empty value
 	Options ParseArguments( std::span< char *const > args, std::initializer_list< std::string_view > values, std::initializer_list< std::string_view > switches );
 	const std::string &Required( const Options &options, std::string_view name );
 	uint32_t ParsePositive( std::string_view text );
+	float ParsePositiveFloat( std::string_view text );
 
 	std::vector< uint8_t > ReadFile( const std::filesystem::path &path );
 	void WriteFile( const std::filesystem::path &path, std::span< const uint8_t > bytes );
