@@ -89,6 +89,9 @@ namespace xrlib
 		// Create a texture from raw data
 		VkResult CreateTextureFromData( STexture &outTexture, VkFormat format, void *data, uint32_t width, uint32_t height );
 
+		// Six square 4-byte faces in Vulkan cube face order, the view is VK_IMAGE_VIEW_TYPE_CUBE
+		VkResult CreateCubeTextureFromData( STexture &outTexture, VkFormat format, const void *data, uint32_t size );
+
 		VkResult CreateSampler( VkSampler &outSampler, VkDevice device, const STextureSamplerConfig &config );
 		void DestroyTexture( STexture &texture );
 

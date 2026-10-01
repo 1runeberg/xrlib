@@ -49,7 +49,7 @@ namespace xrlib::tools
 
 	int PrepareNightGrid( std::span< char *const > args )
 	{
-		const Options options = ParseArguments( args, { "--ibl", "--sky", "--width", "--floor-size", "--diffuse-size", "--specular-size", "--lut-size", "--samples" }, {} );
+		const Options options = ParseArguments( args, { "--ibl", "--sky", "--width", "--floor-size", "--diffuse-size", "--specular-size", "--lut-size", "--samples", "--star-reflections" }, {} );
 		const SEnvironmentBakeConfig config {
 			ParsePositive( Required( options, "--diffuse-size" ) ),
 			ParsePositive( Required( options, "--specular-size" ) ),
@@ -63,7 +63,24 @@ namespace xrlib::tools
 		SNightGridConfig lighting;
 		lighting.floorSize = ParsePositiveFloat( Required( options, "--floor-size" ) );
 		const std::filesystem::path ibl = Required( options, "--ibl" );
-		WriteFile( ibl, EncodeEnvironment( BakeEnvironment( RenderNightGrid( width, height, lighting ), width, height, config ) ) );
+		SEnvironmentData environment = BakeEnvironment( RenderNightGrid( width, height, lighting ), width, height, config );
+
+		// Stars are points in the lighting too, a Gaussian of angular radius r holds pi r squared of its peak
+		std::vector< SEnvironmentPoint > stars;
+		for ( const auto &star : NightGridStars() )
+		{
+			const float area = 3.14159265f * star.size * star.size;
+			stars.push_back( { { star.direction[ 0 ], star.direction[ 1 ], star.direction[ 2 ] }, { star.radiance[ 0 ] * area, star.radiance[ 1 ] * area, star.radiance[ 2 ] * area } } );
+		}
+
+		// Points are faint once spread over a reflection texel, so sharp reflections can brighten them.
+		// The boost fades out by the third mip, leaving rough reflections and diffuse lighting as measured
+		const auto reflections = options.find( "--star-reflections" );
+		const float boost = reflections != options.end() ? ParsePositiveFloat( reflections->second ) : 1.f;
+		const float specularScales[] { boost, 1.f + ( boost - 1.f ) * 2.f / 3.f, 1.f + ( boost - 1.f ) / 3.f };
+
+		AddEnvironmentPoints( environment, stars, specularScales );
+		WriteFile( ibl, EncodeEnvironment( environment ) );
 
 		SNightGridConfig backdrop;
 		backdrop.floor = false;

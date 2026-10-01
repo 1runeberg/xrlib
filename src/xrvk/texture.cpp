@@ -118,7 +118,54 @@ namespace xrlib
 		return VK_SUCCESS;
 	}
 
-	VkResult CTextureManager::CreateSampler( VkSampler &outSampler, VkDevice device, const STextureSamplerConfig &config ) 
+	VkResult CTextureManager::CreateCubeTextureFromData( STexture &outTexture, VkFormat format, const void *data, uint32_t size )
+	{
+		if ( !data || !size )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		outTexture.width = outTexture.height = size;
+		outTexture.format = format;
+
+		VkImageCreateInfo image { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+		image.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+		image.imageType = VK_IMAGE_TYPE_2D;
+		image.format = format;
+		image.extent = { size, size, 1 };
+		image.mipLevels = 1;
+		image.arrayLayers = 6;
+		image.samples = VK_SAMPLE_COUNT_1_BIT;
+		image.tiling = VK_IMAGE_TILING_OPTIMAL;
+		image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		VK_CHECK_RETURN( vkCreateImage( GetDevice(), &image, nullptr, &outTexture.image ) );
+
+		VkMemoryRequirements requirements;
+		vkGetImageMemoryRequirements( GetDevice(), outTexture.image, &requirements );
+
+		VkMemoryAllocateInfo allocation { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+		allocation.allocationSize = requirements.size;
+		allocation.memoryTypeIndex = vkutils::FindMemoryType( GetPhysicalDevice(), requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+		VK_CHECK_RETURN( vkAllocateMemory( GetDevice(), &allocation, nullptr, &outTexture.memory ) );
+		VK_CHECK_RETURN( vkBindImageMemory( GetDevice(), outTexture.image, outTexture.memory, 0 ) );
+
+		// Faces are tightly packed layers of one mip
+		const vkutils::SImageMip mip { 0, VkDeviceSize( size ) * size * 6 * BYTES_PER_PIXEL };
+		const vkutils::SImageUpload upload { outTexture.image, { static_cast< const uint8_t * >( data ), size_t( mip.size ) }, size, size, format, { &mip, 1 }, 6 };
+		VK_CHECK_RETURN( vkutils::UploadTextureDataToImages( GetDevice(), GetPhysicalDevice(), m_pool, GetGraphicsQueue(), { &upload, 1 } ) );
+
+		VkImageViewCreateInfo view { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+		view.image = outTexture.image;
+		view.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+		view.format = format;
+		view.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 };
+		VK_CHECK_RETURN( vkCreateImageView( GetDevice(), &view, nullptr, &outTexture.view ) );
+
+		if ( outTexture.sampler == VK_NULL_HANDLE )
+			outTexture.sampler = m_defaultSampler;
+
+		return VK_SUCCESS;
+	}
+
+	VkResult CTextureManager::CreateSampler(VkSampler &outSampler, VkDevice device, const STextureSamplerConfig &config ) 
 	{ 
 		VkSamplerCreateInfo samplerInfo {};
 		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;

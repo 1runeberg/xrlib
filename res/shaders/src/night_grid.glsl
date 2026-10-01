@@ -19,8 +19,6 @@ const float NIGHT_GRID_COMPASS_SIZE = 0.1;
 const float NIGHT_GRID_USER_RADIUS = 0.08;
 const float NIGHT_GRID_USER_SOFTNESS = 0.8;
 const vec3 NIGHT_GRID_USER_COLOR = vec3( 1.0, 1.0, 0.5 );
-const float NIGHT_GRID_STAR_CELLS = 160.0;
-const float NIGHT_GRID_STAR_DENSITY = 0.12;
 
 // Matches displayColor in mesh_pbr.frag so procedural surfaces agree with lit models
 vec3 nightGridDisplay( vec3 linearColor )
@@ -71,45 +69,6 @@ vec4 nightGridFloor( vec2 position, float floorSize, float userDistance )
 		color = nightGridCompass( position );
 
 	return vec4( color, 1.0 - smoothstep( NIGHT_GRID_FADE_START, NIGHT_GRID_FADE_START + NIGHT_GRID_FADE_SOFTNESS, radius / floorSize ) );
-}
-
-uvec3 nightGridHash( uvec3 v )
-{
-	v = v * 1664525u + 1013904223u;
-	v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-	v ^= v >> 16u;
-	v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-	return v;
-}
-
-// Sparse stars on cube face cells, each with its own slow twinkle
-vec3 nightGridStars( vec3 direction, float seconds )
-{
-	if ( direction.y < 0.02 )
-		return vec3( 0.0 );
-
-	vec3 a = abs( direction );
-	vec2 uv;
-	uint face;
-	if ( a.x >= a.y && a.x >= a.z ) { uv = direction.yz / a.x; face = direction.x > 0.0 ? 0u : 1u; }
-	else if ( a.y >= a.z ) { uv = direction.xz / a.y; face = direction.y > 0.0 ? 2u : 3u; }
-	else { uv = direction.xy / a.z; face = direction.z > 0.0 ? 4u : 5u; }
-
-	vec2 grid = ( uv * 0.5 + 0.5 ) * NIGHT_GRID_STAR_CELLS;
-	vec2 cell = floor( grid );
-	vec3 random = vec3( nightGridHash( uvec3( uvec2( cell ), face ) ) ) / 4294967295.0;
-	if ( random.x > NIGHT_GRID_STAR_DENSITY )
-		return vec3( 0.0 );
-
-	// Keep each star at least a pixel wide, dimming it to match so it doesn't flicker as the head moves
-	vec2 offset = grid - ( cell + 0.25 + 0.5 * random.yz );
-	float size = 0.05 + 0.05 * random.y;
-	float filtered = max( size, length( fwidth( grid ) ) );
-	float disc = exp( -dot( offset, offset ) / ( filtered * filtered ) ) * ( size * size ) / ( filtered * filtered );
-
-	float twinkle = 0.7 + 0.3 * sin( seconds * ( 0.25 + 0.35 * random.z ) + random.y * 6.2831853 );
-	float brightness = mix( 0.6, 5.0, random.z * random.z ) * twinkle * smoothstep( 0.02, 0.2, direction.y );
-	return mix( vec3( 0.8, 0.85, 1.0 ), vec3( 1.0, 0.9, 0.75 ), random.y ) * ( disc * brightness );
 }
 
 #endif

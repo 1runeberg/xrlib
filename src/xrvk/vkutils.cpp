@@ -265,6 +265,7 @@ namespace vkutils
 					break;
 				case VK_FORMAT_R8G8B8A8_SRGB:
 				case VK_FORMAT_R8G8B8A8_UNORM:
+				case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:
 					texelBytes = 4;
 					break;
 				case VK_FORMAT_R16_UNORM:

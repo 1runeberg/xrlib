@@ -12,6 +12,7 @@
 #include <memory>
 #include <stb/stb_image.h>
 #include <stdexcept>
+#include <tuple>
 #include <xrvk/environment.hpp>
 
 namespace xrlib
@@ -43,6 +44,15 @@ namespace xrlib
 
 			const uint32_t rounded = mantissa + 0xfff + ( ( mantissa >> 13 ) & 1 );
 			return uint16_t( ( uint32_t( exponent ) << 10 ) + ( rounded >> 13 ) );
+		}
+
+		float FromHalf( uint16_t half )
+		{
+			const uint32_t exponent = ( half >> 10 ) & 31, mantissa = half & 1023;
+			if ( !exponent )
+				return std::ldexp( float( mantissa ), -24 );
+
+			return std::ldexp( float( mantissa | 1024 ), int( exponent ) - 25 );
 		}
 
 		// Shared exponent packing from the Vulkan E5B9G9R9 conversion rules
@@ -126,6 +136,66 @@ namespace xrlib
 				default:
 					return Normalise( { -u, -v, -1 } );
 			}
+		}
+
+		// Inverse of CubeDirection, face coordinates in -1 to 1
+		uint32_t CubeFace( V direction, float &outU, float &outV )
+		{
+			const float x = std::abs( direction.x ), y = std::abs( direction.y ), z = std::abs( direction.z );
+			if ( x >= y && x >= z )
+			{
+				outV = -direction.y / x;
+				outU = direction.x > 0 ? -direction.z / x : direction.z / x;
+				return direction.x > 0 ? 0 : 1;
+			}
+
+			if ( y >= z )
+			{
+				outU = direction.x / y;
+				outV = direction.y > 0 ? direction.z / y : -direction.z / y;
+				return direction.y > 0 ? 2 : 3;
+			}
+
+			outV = -direction.y / z;
+			outU = direction.z > 0 ? direction.x / z : -direction.x / z;
+			return direction.z > 0 ? 4 : 5;
+		}
+
+		// Spreads a point's energy over the four nearest texels of one cube mip as RGB radiance
+		void SplatCube( std::vector< float > &radiance, uint32_t size, V direction, V energy )
+		{
+			float u = 0, v = 0;
+			const uint32_t face = CubeFace( direction, u, v );
+			const float px = std::clamp( ( u + 1.f ) * .5f * size - .5f, 0.f, size - 1.f );
+			const float py = std::clamp( ( v + 1.f ) * .5f * size - .5f, 0.f, size - 1.f );
+			const uint32_t x0 = uint32_t( px ), y0 = uint32_t( py );
+			const uint32_t x1 = std::min( x0 + 1, size - 1 ), y1 = std::min( y0 + 1, size - 1 );
+			const float tx = px - x0, ty = py - y0;
+
+			for ( auto [ x, y, weight ] : { std::tuple { x0, y0, ( 1 - tx ) * ( 1 - ty ) }, std::tuple { x1, y0, tx * ( 1 - ty ) }, std::tuple { x0, y1, ( 1 - tx ) * ty }, std::tuple { x1, y1, tx * ty } } )
+			{
+				if ( weight <= 0.f )
+					continue;
+
+				// Exact solid angle of this texel on the unit cube, even for the smallest mips
+				auto Corner = []( float cu, float cv ) { return std::atan2( cu * cv, std::sqrt( cu * cu + cv * cv + 1.f ) ); };
+				const float u0 = 2.f * x / size - 1.f, u1 = 2.f * ( x + 1.f ) / size - 1.f;
+				const float v0 = 2.f * y / size - 1.f, v1 = 2.f * ( y + 1.f ) / size - 1.f;
+				const float solidAngle = Corner( u0, v0 ) - Corner( u0, v1 ) - Corner( u1, v0 ) + Corner( u1, v1 );
+
+				float *texel = radiance.data() + ( ( size_t( face ) * size + y ) * size + x ) * 3;
+				texel[ 0 ] += energy.x * weight / solidAngle;
+				texel[ 1 ] += energy.y * weight / solidAngle;
+				texel[ 2 ] += energy.z * weight / solidAngle;
+			}
+		}
+
+		// Adds RGB radiance to RGBA half texels in one rounding step, so small additions aren't lost
+		void AddRadiance( uint16_t *pixels, const std::vector< float > &radiance )
+		{
+			for ( size_t i = 0; i < radiance.size() / 3; ++i )
+				for ( size_t c = 0; c < 3; ++c )
+					pixels[ i * 4 + c ] = Half( FromHalf( pixels[ i * 4 + c ] ) + radiance[ i * 3 + c ] );
 		}
 
 		V SampleHDR( std::span< const float > rgb, uint32_t width, uint32_t height, V direction )
@@ -244,6 +314,43 @@ namespace xrlib
 		return data;
 	}
 
+	void AddEnvironmentPoints( SEnvironmentData &data, std::span< const SEnvironmentPoint > points, std::span< const float > specularScales )
+	{
+		if ( !IsValidEnvironment( data ) )
+			throw std::invalid_argument( "Invalid environment images" );
+
+		// Every specular mip gets the full energy by default, so rough reflections keep the average brightness
+		size_t offset = 0;
+		for ( uint32_t level = 0, size = data.specular.size; level < data.specular.levels; ++level, size = std::max( 1u, size / 2 ) )
+		{
+			const float scale = level < specularScales.size() ? specularScales[ level ] : 1.f;
+			std::vector< float > radiance( size_t( size ) * size * 6 * 3 );
+			for ( const auto &point : points )
+				SplatCube( radiance, size, Normalise( point.direction ), Scale( point.energy, scale ) );
+
+			AddRadiance( data.specular.pixels.data() + offset, radiance );
+			offset += size_t( size ) * size * 6 * 4;
+		}
+
+		// Diffuse stores irradiance over pi, a cosine-weighted sum for points
+		const uint32_t size = data.diffuse.size;
+		std::vector< float > irradiance;
+		irradiance.reserve( size_t( size ) * size * 6 * 3 );
+		for ( uint32_t face = 0; face < 6; ++face )
+			for ( uint32_t y = 0; y < size; ++y )
+				for ( uint32_t x = 0; x < size; ++x )
+				{
+					const V normal = CubeDirection( face, 2.f * ( x + .5f ) / size - 1.f, 2.f * ( y + .5f ) / size - 1.f );
+					V sum {};
+					for ( const auto &point : points )
+						sum = Add( sum, Scale( point.energy, std::max( Dot( normal, Normalise( point.direction ) ), 0.f ) / k_Pi ) );
+
+					irradiance.insert( irradiance.end(), { sum.x, sum.y, sum.z } );
+				}
+
+		AddRadiance( data.diffuse.pixels.data(), irradiance );
+	}
+
 	SEnvironmentData BakeEnvironmentHDR( std::span< const uint8_t > encodedHDR, const SEnvironmentBakeConfig &config )
 	{
 		int width = 0, height = 0;
@@ -312,13 +419,20 @@ namespace xrlib
 
 	SEnvironmentBackground PrepareBackground( std::span< const float > rgb, uint32_t width, uint32_t height )
 	{
-		if ( !width || !height || rgb.size() != size_t( width ) * height * 3 )
+		if ( width < 4 || !height || width > INT32_MAX || height > INT32_MAX || rgb.size() != size_t( width ) * height * 3 )
 			throw std::invalid_argument( "Invalid background image" );
 
-		SEnvironmentBackground background { width, height, {} };
-		background.pixels.resize( size_t( width ) * height );
-		for ( size_t i = 0; i < background.pixels.size(); ++i )
-			background.pixels[ i ] = PackE5B9G9R9( { rgb[ i * 3 ], rgb[ i * 3 + 1 ], rgb[ i * 3 + 2 ] } );
+		// A cube's horizon ring is four faces wide, so this matches the source's detail there
+		SEnvironmentBackground background { width / 4, {} };
+		background.pixels.reserve( size_t( background.size ) * background.size * 6 );
+
+		for ( uint32_t face = 0; face < 6; ++face )
+			for ( uint32_t y = 0; y < background.size; ++y )
+				for ( uint32_t x = 0; x < background.size; ++x )
+				{
+					const V direction = CubeDirection( face, 2.f * ( x + .5f ) / background.size - 1.f, 2.f * ( y + .5f ) / background.size - 1.f );
+					background.pixels.push_back( PackE5B9G9R9( SampleHDR( rgb, width, height, direction ) ) );
+				}
 
 		return background;
 	}
@@ -332,18 +446,17 @@ namespace xrlib
 
 	std::vector< uint8_t > EncodeBackground( const SEnvironmentBackground &background )
 	{
-		if ( !background.width || !background.height || background.pixels.size() != size_t( background.width ) * background.height )
+		if ( !background.size || background.pixels.size() != size_t( background.size ) * background.size * 6 )
 			throw std::invalid_argument( "Invalid background image" );
 
-		std::vector< uint8_t > bytes { 'X', 'R', 'V', 'K', 'S', 'K', 'Y', '1' };
+		std::vector< uint8_t > bytes { 'X', 'R', 'V', 'K', 'S', 'K', 'Y', '2' };
 		auto AppendInteger = [ & ]( uint32_t value )
 		{
 			for ( uint32_t i = 0; i < 4; ++i )
 				bytes.push_back( uint8_t( value >> ( 8 * i ) ) );
 		};
 
-		AppendInteger( background.width );
-		AppendInteger( background.height );
+		AppendInteger( background.size );
 		for ( uint32_t pixel : background.pixels )
 			AppendInteger( pixel );
 
@@ -352,8 +465,8 @@ namespace xrlib
 
 	SEnvironmentBackground DecodeBackground( std::span< const uint8_t > bytes )
 	{
-		constexpr std::array< uint8_t, 8 > magic { 'X', 'R', 'V', 'K', 'S', 'K', 'Y', '1' };
-		if ( bytes.size() < magic.size() + 8 || !std::equal( magic.begin(), magic.end(), bytes.begin() ) )
+		constexpr std::array< uint8_t, 8 > magic { 'X', 'R', 'V', 'K', 'S', 'K', 'Y', '2' };
+		if ( bytes.size() < magic.size() + 4 || !std::equal( magic.begin(), magic.end(), bytes.begin() ) )
 			throw std::invalid_argument( "Invalid background payload" );
 
 		size_t offset = magic.size();
@@ -366,10 +479,9 @@ namespace xrlib
 		};
 
 		SEnvironmentBackground background;
-		background.width = ReadInteger();
-		background.height = ReadInteger();
+		background.size = ReadInteger();
 
-		const uint64_t count = uint64_t( background.width ) * background.height;
+		const uint64_t count = uint64_t( background.size ) * background.size * 6;
 		if ( !count || count != ( bytes.size() - offset ) / 4 || ( bytes.size() - offset ) % 4 )
 			throw std::invalid_argument( "Invalid background image layout" );
 

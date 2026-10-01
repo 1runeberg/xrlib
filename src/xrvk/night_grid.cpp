@@ -46,6 +46,30 @@ namespace xrlib
 		constexpr float k_PanelInner = .98f, k_PanelOuter = .9f; // Cosines from the zenith
 		constexpr float k_NebulaStrength = .3f;
 
+		// Star field, placed on a grid of cells over each cube face
+		constexpr uint32_t k_StarCells = 160;
+		constexpr float k_StarDensity = .07f;
+		constexpr SColor k_StarCool { .8f, .85f, 1.f };
+		constexpr SColor k_StarWarm { 1.f, .9f, .75f };
+
+		std::array< uint32_t, 3 > StarHash( uint32_t x, uint32_t y, uint32_t z )
+		{
+			std::array< uint32_t, 3 > v { x * 1664525u + 1013904223u, y * 1664525u + 1013904223u, z * 1664525u + 1013904223u };
+			auto Mix = [ & ]()
+			{
+				v[ 0 ] += v[ 1 ] * v[ 2 ];
+				v[ 1 ] += v[ 2 ] * v[ 0 ];
+				v[ 2 ] += v[ 0 ] * v[ 1 ];
+			};
+
+			Mix();
+			for ( auto &value : v )
+				value ^= value >> 16;
+			Mix();
+
+			return v;
+		}
+
 		// The original floor profile, half strength at the centre and zero at the half width
 		float GridLine( float position, float width )
 		{
@@ -152,5 +176,45 @@ namespace xrlib
 			}
 
 		return rgb;
+	}
+
+	std::vector< SNightGridStar > NightGridStars()
+	{
+		std::vector< SNightGridStar > stars;
+		constexpr float cellAngle = 2.f / k_StarCells; // Near a face centre
+
+		for ( uint32_t face = 0; face < 6; ++face )
+			for ( uint32_t cy = 0; cy < k_StarCells; ++cy )
+				for ( uint32_t cx = 0; cx < k_StarCells; ++cx )
+				{
+					const auto hash = StarHash( cx, cy, face );
+					float random[ 3 ];
+					for ( int i = 0; i < 3; ++i )
+						random[ i ] = float( double( hash[ i ] ) / 4294967295.0 );
+
+					if ( random[ 0 ] > k_StarDensity )
+						continue;
+
+					// Face axes match the cube face lookup the stars were designed on
+					const float u = ( cx + .25f + .5f * random[ 1 ] ) / k_StarCells * 2.f - 1.f;
+					const float v = ( cy + .25f + .5f * random[ 2 ] ) / k_StarCells * 2.f - 1.f;
+					const float sign = ( face & 1 ) ? -1.f : 1.f;
+					float x = u, y = v, z = sign;
+					if ( face < 2 )
+						x = sign, y = u, z = v;
+					else if ( face < 4 )
+						x = u, y = sign, z = v;
+
+					const float length = std::sqrt( x * x + y * y + z * z );
+					x /= length, y /= length, z /= length;
+					if ( y < .02f )
+						continue;
+
+					const float brightness = ( .4f + 2.2f * random[ 2 ] * random[ 2 ] ) * Smoothstep( .02f, .2f, y );
+					const SColor radiance = Mix( k_StarCool, k_StarWarm, random[ 1 ] ) * brightness;
+					stars.push_back( { { x, y, z }, { radiance.r, radiance.g, radiance.b }, ( .03f + .02f * random[ 1 ] ) * cellAngle } );
+				}
+
+		return stars;
 	}
 } // namespace xrlib
