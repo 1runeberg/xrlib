@@ -25,12 +25,20 @@ namespace xrlib
     {
         if ( pAndroidApp && pAndroidApp->activity && pAndroidApp->activity->vm && pAndroidApp->activity->clazz )
         {
+            JavaVM *vm = pAndroidApp->activity->vm;
             JNIEnv *env = nullptr;
-            pAndroidApp->activity->vm->AttachCurrentThread( &env, nullptr );
+
+            // Keep an existing attachment, the OpenXR runtime still needs it while the app tears down
+            const bool bAttachHere = vm->GetEnv( reinterpret_cast< void ** >( &env ), JNI_VERSION_1_6 ) == JNI_EDETACHED;
+            if ( bAttachHere )
+                vm->AttachCurrentThread( &env, nullptr );
+
             jclass activityClass = env->GetObjectClass( pAndroidApp->activity->clazz );
             jmethodID finishMethod = env->GetMethodID( activityClass, "finish", "()V" );
             env->CallVoidMethod( pAndroidApp->activity->clazz, finishMethod );
-            pAndroidApp->activity->vm->DetachCurrentThread();
+
+            if ( bAttachHere )
+                vm->DetachCurrentThread();
         }
     }
     #else
