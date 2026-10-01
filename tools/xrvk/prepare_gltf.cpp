@@ -140,12 +140,18 @@ namespace xrlib::tools
 
 	int PrepareGltf( std::span< char *const > args )
 	{
-		const Options options = ParseArguments( args, { "--source", "--output", "--ktx" }, { "--force" } );
+		const Options options = ParseArguments( args, { "--source", "--output", "--ktx", "--encode" }, { "--force" } );
 		const fs::path source = fs::weakly_canonical( Required( options, "--source" ) );
 		const fs::path output = fs::weakly_canonical( Required( options, "--output" ) );
 		const fs::path directory = source.parent_path();
 		const std::string ktx = options.contains( "--ktx" ) ? Required( options, "--ktx" ) : "ktx";
 		const bool bForce = options.contains( "--force" );
+
+		const std::string encode = options.contains( "--encode" ) ? Required( options, "--encode" ) : "none";
+		if ( encode != "none" && encode != "astc" )
+			throw std::invalid_argument( "--encode must be none or astc" );
+
+		const bool bAstc = encode == "astc";
 
 		if ( output == directory || IsWithin( directory, output ) )
 			throw std::invalid_argument( "Generated output must be separate from the source assets" );
@@ -215,10 +221,11 @@ namespace xrlib::tools
 			images.push_back( data.subspan( bufferView.byteOffset, bufferView.byteLength ) );
 		}
 
-		// Color space and mip wrap come from the material slots and samplers using each image
+		// Color space, mip wrap and normal use come from the material slots and samplers using each image
 		std::vector< std::string_view > roles( images.size() );
 		std::vector< std::optional< fastgltf::Wrap > > wraps( images.size() );
-		auto Use = [ & ]( const auto &info, std::string_view role )
+		std::vector< bool > normals( images.size() );
+		auto Use = [ & ]( const auto &info, std::string_view role, bool bNormal = false )
 		{
 			if ( !info.has_value() )
 				return;
@@ -243,6 +250,7 @@ namespace xrlib::tools
 
 			roles[ image ] = role;
 			wraps[ image ] = wrap;
+			normals[ image ] = normals[ image ] || bNormal;
 		};
 
 		for ( const fastgltf::Material &material : asset.materials )
@@ -250,7 +258,7 @@ namespace xrlib::tools
 			Use( material.pbrData.baseColorTexture, "srgb" );
 			Use( material.emissiveTexture, "srgb" );
 			Use( material.pbrData.metallicRoughnessTexture, "linear" );
-			Use( material.normalTexture, "linear" );
+			Use( material.normalTexture, "linear", true );
 			Use( material.occlusionTexture, "linear" );
 		}
 
@@ -262,6 +270,10 @@ namespace xrlib::tools
 			Hash( hash, std::to_string( data.size() ) );
 			Hash( hash, data );
 		}
+
+		// Uncompressed fingerprints stay as they were so bundled outputs aren't regenerated
+		if ( bAstc )
+			Hash( hash, encode );
 
 		char fingerprint[ 17 ];
 		std::snprintf( fingerprint, sizeof( fingerprint ), "%016llx", static_cast< unsigned long long >( hash ) );
@@ -311,7 +323,12 @@ namespace xrlib::tools
 			WriteFile( input, data );
 
 			const fs::path target = staging.path / "textures" / ( "image-" + std::to_string( i ) + ".ktx2" );
-			const std::string format = bWide ? "R16G16B16A16_UNORM" : ( role == "srgb" ? "R8G8B8A8_SRGB" : "R8G8B8A8_UNORM" );
+			std::string format = bWide ? "R16G16B16A16_UNORM" : ( role == "srgb" ? "R8G8B8A8_SRGB" : "R8G8B8A8_UNORM" );
+
+			// Normals keep smaller blocks to stay sharp, 16-bit sources stay uncompressed for their precision
+			const bool bEncode = bAstc && !bWide;
+			if ( bEncode )
+				format = std::string( normals[ i ] ? "ASTC_4x4_" : "ASTC_6x6_" ) + ( role == "srgb" ? "SRGB_BLOCK" : "UNORM_BLOCK" );
 
 			std::string wrap = "wrap";
 			if ( wraps[ i ] == fastgltf::Wrap::ClampToEdge )
@@ -319,8 +336,14 @@ namespace xrlib::tools
 			else if ( wraps[ i ] == fastgltf::Wrap::MirroredRepeat )
 				wrap = "reflect";
 
-			RunProgram( { tool->string(), "create", "--format", format, "--assign-tf", role, "--assign-primaries", role == "srgb" ? "bt709" : "none", "--assign-texcoord-origin", "top-left",
-						  "--generate-mipmap", "--mipmap-filter", "box", "--mipmap-wrap", wrap, input.string(), target.string() } );
+			std::vector< std::string > command { tool->string(), "create", "--format", format, "--assign-tf", role, "--assign-primaries", role == "srgb" ? "bt709" : "none",
+												 "--assign-texcoord-origin", "top-left", "--generate-mipmap", "--mipmap-filter", "box", "--mipmap-wrap", wrap };
+
+			if ( bEncode )
+				command.insert( command.end(), { "--astc-quality", "thorough" } );
+
+			command.insert( command.end(), { input.string(), target.string() } );
+			RunProgram( command );
 
 			RunProgram( { tool->string(), "validate", target.string() } );
 			fs::remove( input );
@@ -352,7 +375,7 @@ namespace xrlib::tools
 		WriteManifest( temporaryManifest, manifest );
 		fs::rename( temporaryManifest, manifestPath );
 
-		std::cout << "Prepared " << images.size() << " KTX2 textures in " << output.string() << '\n';
+		std::cout << "Prepared " << images.size() << ( bAstc ? " ASTC" : "" ) << " KTX2 textures in " << output.string() << '\n';
 		return 0;
 	}
 } // namespace xrlib::tools

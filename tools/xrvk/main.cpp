@@ -37,8 +37,8 @@ int main( int argc, char **argv )
 	}
 
 	std::cerr << "Usage:\n"
-				 "  xrvk-tools gltf --source model.gltf|model.glb --output directory [--ktx path] [--force]\n"
-				 "      Prepares a model's textures as uncompressed KTX2 mip chains using KTX-Software\n"
+				 "  xrvk-tools gltf --source model.gltf|model.glb --output directory [--ktx path] [--encode none|astc] [--force]\n"
+				 "      Prepares a model's textures as KTX2 mip chains using KTX-Software (uncompressed or ASTC for mobile GPUs)\n"
 				 "  xrvk-tools environment --source environment.hdr --output environment.ibl\n"
 				 "      --diffuse-size n --specular-size n --lut-size n --samples n\n"
 				 "      Bakes image based lighting from an equirectangular Radiance HDR\n"

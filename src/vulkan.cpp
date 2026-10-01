@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Copyright Rune Berg 
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -286,6 +286,7 @@ namespace xrlib
 			VkPhysicalDeviceFeatures supportedFeatures {};
 			vkGetPhysicalDeviceFeatures( m_vkPhysicalDevice, &supportedFeatures );
 			vkPhysicalDeviceFeatures.samplerAnisotropy = supportedFeatures.samplerAnisotropy;
+			vkPhysicalDeviceFeatures.textureCompressionASTC_LDR = supportedFeatures.textureCompressionASTC_LDR;
 			// VkPhysicalDeviceFeatures2 physical_features2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 			// physical_features2.features.samplerAnisotropy = VK_TRUE;
 			// physical_features2.features.multiViewport = VK_TRUE;

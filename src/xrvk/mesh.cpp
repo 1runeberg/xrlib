@@ -557,7 +557,9 @@ namespace xrlib
 			for ( unsigned slot = 0; slot < 5; ++slot )
 			{
 				const STexture *texture = nullptr;
-				if ( maps[ slot ] >= 0 )
+
+				// Textures the GPU couldn't create fall back like missing maps
+				if ( maps[ slot ] >= 0 && textures.at( maps[ slot ] ).view )
 					texture = &textures.at( maps[ slot ] );
 				else
 				{
