@@ -71,4 +71,17 @@ vec4 nightGridFloor( vec2 position, float floorSize, float userDistance )
 	return vec4( color, 1.0 - smoothstep( NIGHT_GRID_FADE_START, NIGHT_GRID_FADE_START + NIGHT_GRID_FADE_SOFTNESS, radius / floorSize ) );
 }
 
+// How much of the floor is grid, glow or compass rather than black ground, for alpha over passthrough
+// Same inputs as nightGridFloor, keep the two in step
+float nightGridFloorCoverage( vec2 position, float floorSize, float userDistance )
+{
+	float major = max( nightGridLine( position.x, NIGHT_GRID_MAJOR_WIDTH ), nightGridLine( position.y, NIGHT_GRID_MAJOR_WIDTH ) );
+	float minor = max( nightGridLine( position.x * NIGHT_GRID_MINOR_SPACING, NIGHT_GRID_MINOR_WIDTH ), nightGridLine( position.y * NIGHT_GRID_MINOR_SPACING, NIGHT_GRID_MINOR_WIDTH ) );
+	float glow = 1.0 - smoothstep( NIGHT_GRID_USER_RADIUS, NIGHT_GRID_USER_RADIUS + NIGHT_GRID_USER_SOFTNESS, userDistance );
+
+	float radius = length( position );
+	float coverage = radius < NIGHT_GRID_COMPASS_SIZE ? 1.0 : max( max( major, minor ), glow );
+	return coverage * ( 1.0 - smoothstep( NIGHT_GRID_FADE_START, NIGHT_GRID_FADE_START + NIGHT_GRID_FADE_SOFTNESS, radius / floorSize ) );
+}
+
 #endif
