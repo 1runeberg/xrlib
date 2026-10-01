@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -21,6 +22,17 @@ namespace xrlib
 		bool floor = true;	   // Off for the visible backdrop, where the floor is real geometry
 	};
 
-	// Linear RGB in the equirectangular layout BakeEnvironment expects, stars are left to the shader
+	// Linear RGB in the equirectangular layout BakeEnvironment and PrepareBackground expect
 	std::vector< float > RenderNightGrid( uint32_t width, uint32_t height, const SNightGridConfig &config );
+
+	// A fixed star in the same environment space as the baked sky and lighting
+	struct SNightGridStar
+	{
+		std::array< float, 3 > direction; // Unit vector
+		std::array< float, 3 > radiance;  // Linear RGB at the centre
+		float size;						  // Angular radius in radians
+	};
+
+	// The same star field each call, drawn as geometry so stars stay sharp at any sky resolution
+	std::vector< SNightGridStar > NightGridStars();
 } // namespace xrlib

@@ -44,6 +44,18 @@ namespace xrlib
 	SEnvironmentData BakeEnvironment( std::span< const float > rgb, uint32_t width, uint32_t height, const SEnvironmentBakeConfig &config );
 	SEnvironmentData BakeEnvironmentHDR( std::span< const uint8_t > encodedHDR, const SEnvironmentBakeConfig &config );
 
+	// A light source too small for the equirectangular input, such as a star
+	struct SEnvironmentPoint
+	{
+		XrVector3f direction;
+		XrVector3f energy; // Linear radiance integrated over its solid angle
+	};
+
+	// Adds points to a baked environment without resampling it, keeping their energy in every map
+	// specularScales optionally multiplies the points per specular mip, such as brighter sharp reflections.
+	// Levels past its end use 1
+	void AddEnvironmentPoints( SEnvironmentData &data, std::span< const SEnvironmentPoint > points, std::span< const float > specularScales = {} );
+
 	// Portable little-endian baked payload for bundling prepared lighting with an app
 	std::vector< uint8_t > EncodeEnvironment( const SEnvironmentData &data );
 	SEnvironmentData DecodeEnvironment( std::span< const uint8_t > bytes );
@@ -51,15 +63,15 @@ namespace xrlib
 	// Checks image sizes, mip levels and pixel counts before encoding or upload
 	bool IsValidEnvironment( const SEnvironmentData &data );
 
-	// Visible backdrop in the same equirectangular orientation as the baked lighting
-	// Pixels are linear RGB packed as VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, rows from north to south
+	// Visible backdrop cubemap in the same orientation as the baked lighting, sample it with a samplerCube
+	// Pixels are linear RGB packed as VK_FORMAT_E5B9G9R9_UFLOAT_PACK32 in Vulkan cube face order
 	struct SEnvironmentBackground
 	{
-		uint32_t width = 0;
-		uint32_t height = 0;
+		uint32_t size = 0; // Face edge in pixels
 		std::vector< uint32_t > pixels;
 	};
 
+	// Resamples equirectangular input to faces a quarter of its width, keeping the horizon's detail
 	SEnvironmentBackground PrepareBackground( std::span< const float > rgb, uint32_t width, uint32_t height );
 	SEnvironmentBackground PrepareBackgroundHDR( std::span< const uint8_t > encodedHDR );
 	std::vector< uint8_t > EncodeBackground( const SEnvironmentBackground &background );
