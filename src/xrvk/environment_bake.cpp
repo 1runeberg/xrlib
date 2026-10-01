@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <stb/stb_image.h>
@@ -30,7 +31,12 @@ namespace xrlib
 
 		uint16_t Half( float value )
 		{
-			const uint32_t bits = std::bit_cast< uint32_t >( std::clamp( value, 0.f, 65504.f ) );
+			const float clamped = std::clamp( value, 0.f, 65504.f );
+
+			// Sniper's libstdc++ predates std::bit_cast
+			uint32_t bits;
+			std::memcpy( &bits, &clamped, sizeof( bits ) );
+
 			const int exponent = int( ( bits >> 23 ) & 255 ) - 127 + 15;
 			const uint32_t mantissa = bits & 0x7fffff;
 			if ( exponent <= 0 )
