@@ -389,6 +389,15 @@ namespace xrlib
 			}
 		}
 
+		// Pooled workers leave once m_running clears, join them before their threads are destroyed
+		for ( auto &worker : m_threadPool )
+		{
+			if ( worker && worker->thread.joinable() )
+			{
+				worker->thread.join();
+			}
+		}
+
 		for ( auto &[ type, dedicated ] : m_dedicatedThreads )
 		{
 			dedicated.stop = true;
