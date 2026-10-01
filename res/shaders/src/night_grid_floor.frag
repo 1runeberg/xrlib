@@ -4,6 +4,7 @@
 
 // Night grid floor in metres on the mesh XZ plane, fading to the black ground so it can draw opaque and write depth
 // Emissive x is the floor half extent in metres, matching the mesh and the baked lighting
+// Alpha is the grid's coverage, so only the lines, glow and compass show over passthrough
 #version 450
 #include "pbr_types.glsl"
 #include "tonemaps.glsl"
@@ -14,6 +15,8 @@ layout( location = 0 ) out vec4 outColor;
 void main()
 {
 	vec3 eyes = ( scene.eyePositions[ 0 ].xyz + scene.eyePositions[ 1 ].xyz ) * 0.5;
-	vec4 floorColor = nightGridFloor( localPosition.xz, material.emissiveFactor.x, length( worldPosition.xz - eyes.xz ) );
-	outColor = vec4( nightGridDisplay( floorColor.rgb * scene.environmentIntensity ) * floorColor.a, 1.0 );
+	float userDistance = length( worldPosition.xz - eyes.xz );
+	vec4 floorColor = nightGridFloor( localPosition.xz, material.emissiveFactor.x, userDistance );
+	float coverage = nightGridFloorCoverage( localPosition.xz, material.emissiveFactor.x, userDistance );
+	outColor = vec4( nightGridDisplay( floorColor.rgb * scene.environmentIntensity ) * floorColor.a, coverage );
 }
