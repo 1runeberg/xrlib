@@ -211,6 +211,53 @@ namespace vkutils
 	}
 
 
+	SFormatBlock GetFormatBlock( VkFormat format )
+	{
+		switch ( format )
+		{
+			case VK_FORMAT_R8_UNORM:
+				return { 1, 1, 1 };
+			case VK_FORMAT_R8G8_UNORM:
+			case VK_FORMAT_R16_UNORM:
+				return { 1, 1, 2 };
+			case VK_FORMAT_R8G8B8_UNORM:
+				return { 1, 1, 3 };
+			case VK_FORMAT_R8G8B8A8_SRGB:
+			case VK_FORMAT_R8G8B8A8_UNORM:
+			case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:
+			case VK_FORMAT_R16G16_UNORM:
+				return { 1, 1, 4 };
+			case VK_FORMAT_R16G16B16_UNORM:
+				return { 1, 1, 6 };
+			case VK_FORMAT_R16G16B16A16_UNORM:
+			case VK_FORMAT_R16G16B16A16_SFLOAT:
+				return { 1, 1, 8 };
+			case VK_FORMAT_ASTC_4x4_UNORM_BLOCK:
+			case VK_FORMAT_ASTC_4x4_SRGB_BLOCK:
+				return { 4, 4, 16 };
+			case VK_FORMAT_ASTC_6x6_UNORM_BLOCK:
+			case VK_FORMAT_ASTC_6x6_SRGB_BLOCK:
+				return { 6, 6, 16 };
+			default:
+				return {};
+		}
+	}
+
+	VkFormat GetSrgbFormat( VkFormat format )
+	{
+		switch ( format )
+		{
+			case VK_FORMAT_R8G8B8A8_UNORM:
+				return VK_FORMAT_R8G8B8A8_SRGB;
+			case VK_FORMAT_ASTC_4x4_UNORM_BLOCK:
+				return VK_FORMAT_ASTC_4x4_SRGB_BLOCK;
+			case VK_FORMAT_ASTC_6x6_UNORM_BLOCK:
+				return VK_FORMAT_ASTC_6x6_SRGB_BLOCK;
+			default:
+				return VK_FORMAT_UNDEFINED;
+		}
+	}
+
 	CImageUpload::~CImageUpload()
 	{
 		if ( m_submitted && m_result == VK_NOT_READY )
@@ -241,8 +288,8 @@ namespace vkutils
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties( physicalDevice, &properties );
 
-		// Align to both Vulkan's preferred copy offset and all supported texel sizes
-		const VkDeviceSize alignment = std::lcm( VkDeviceSize( 24 ), ( std::max )( VkDeviceSize( 4 ), properties.limits.optimalBufferCopyOffsetAlignment ) );
+		// Align to both Vulkan's preferred copy offset and all supported texel and block sizes
+		const VkDeviceSize alignment = std::lcm( VkDeviceSize( 48 ), ( std::max )( VkDeviceSize( 4 ), properties.limits.optimalBufferCopyOffsetAlignment ) );
 		std::vector< VkDeviceSize > offsets;
 		offsets.reserve( images.size() );
 
@@ -250,40 +297,9 @@ namespace vkutils
 
 		for ( const auto &image : images )
 		{
-			uint32_t texelBytes = 0;
-
-			switch ( image.format )
-			{
-				case VK_FORMAT_R8_UNORM:
-					texelBytes = 1;
-					break;
-				case VK_FORMAT_R8G8_UNORM:
-					texelBytes = 2;
-					break;
-				case VK_FORMAT_R8G8B8_UNORM:
-					texelBytes = 3;
-					break;
-				case VK_FORMAT_R8G8B8A8_SRGB:
-				case VK_FORMAT_R8G8B8A8_UNORM:
-				case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:
-					texelBytes = 4;
-					break;
-				case VK_FORMAT_R16_UNORM:
-					texelBytes = 2;
-					break;
-				case VK_FORMAT_R16G16_UNORM:
-					texelBytes = 4;
-					break;
-				case VK_FORMAT_R16G16B16_UNORM:
-					texelBytes = 6;
-					break;
-				case VK_FORMAT_R16G16B16A16_UNORM:
-				case VK_FORMAT_R16G16B16A16_SFLOAT:
-					texelBytes = 8;
-					break;
-				default:
-					return VK_ERROR_FORMAT_NOT_SUPPORTED;
-			}
+			const SFormatBlock block = GetFormatBlock( image.format );
+			if ( !block.bytes )
+				return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
 			if ( !image.image || !image.width || !image.height || !image.layers )
 				return VK_ERROR_INITIALIZATION_FAILED;
@@ -295,8 +311,9 @@ namespace vkutils
 			{
 				const SImageMip mip = image.mips.empty() ? SImageMip { 0, image.data.size() } : image.mips[ level ];
 
-				if ( mip.offset > image.data.size() || mip.size > image.data.size() - mip.offset || mip.offset % std::lcm( 4u, texelBytes ) || mip.size / texelBytes / width / image.layers != height ||
-					 mip.size % ( VkDeviceSize( width ) * texelBytes * image.layers ) )
+				const VkDeviceSize blocksWide = ( width + block.width - 1 ) / block.width, blocksHigh = ( height + block.height - 1 ) / block.height;
+				if ( mip.offset > image.data.size() || mip.size > image.data.size() - mip.offset || mip.offset % std::lcm( 4u, block.bytes ) || mip.size / block.bytes / blocksWide / image.layers != blocksHigh ||
+					 mip.size % ( blocksWide * block.bytes * image.layers ) )
 					return VK_ERROR_INITIALIZATION_FAILED;
 
 				if ( level + 1 < levels && width == 1 && height == 1 )

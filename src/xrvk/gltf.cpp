@@ -16,6 +16,7 @@
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
 #include <limits>
+#include <numeric>
 #include <span>
 #include <chrono>
 #include <atomic>
@@ -82,8 +83,8 @@ namespace xrlib
 		return true;
 	}
 
-	// Prepared textures use a restricted KTX2 profile: uncompressed 2D RGBA8/16
-	// Reject other profiles rather than interpreting compressed bytes as pixels
+	// Prepared textures use a restricted KTX2 profile: 2D RGBA8/16 or ASTC 4x4/6x6 without supercompression
+	// Reject other profiles rather than interpreting unknown bytes as pixels
 	static bool DecodeKtx2( SGltfImage &outImage, std::span< const std::byte > bytes )
 	{
 		constexpr uint8_t identifier[] = { 0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a };
@@ -99,7 +100,8 @@ namespace xrlib
 		auto InBounds = [ & ]( uint64_t offset, uint64_t size ) { return offset <= bytes.size() && size <= bytes.size() - offset; };
 		const auto format = Read( 12 ), width = Read( 20 ), height = Read( 24 ), levels = Read( 40 );
 		const bool wide = format == VK_FORMAT_R16G16B16A16_UNORM;
-		if ( ( format != VK_FORMAT_R8G8B8A8_UNORM && format != VK_FORMAT_R8G8B8A8_SRGB && !wide ) || Read( 16 ) != ( wide ? 2 : 1 ) || !width || !height || width > INT_MAX || height > INT_MAX || Read( 28 ) || Read( 32 ) || Read( 36 ) != 1 ||
+		const bool astc = format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK || format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK || format == VK_FORMAT_ASTC_6x6_UNORM_BLOCK || format == VK_FORMAT_ASTC_6x6_SRGB_BLOCK;
+		if ( ( format != VK_FORMAT_R8G8B8A8_UNORM && format != VK_FORMAT_R8G8B8A8_SRGB && !wide && !astc ) || Read( 16 ) != ( wide ? 2 : 1 ) || !width || !height || width > INT_MAX || height > INT_MAX || Read( 28 ) || Read( 32 ) || Read( 36 ) != 1 ||
 			 Read( 44 ) || !levels || levels > 32 || !InBounds( 80, levels * 24 ) || Read( 64, 8 ) || Read( 72, 8 ) )
 			return false;
 		uint64_t dimension = ( std::max )( width, height ), requiredLevels = 0;
@@ -131,15 +133,17 @@ namespace xrlib
 				return false;
 			entry += ( length + 3 ) & ~uint64_t( 3 );
 		}
+		const vkutils::SFormatBlock block = vkutils::GetFormatBlock( static_cast< VkFormat >( format ) );
 		uint64_t w = width, h = height;
 		std::vector< std::pair< uint64_t, uint64_t > > ranges;
 		for ( size_t level = 0; level < levels; ++level )
 		{
 			const auto offset = Read( 80 + level * 24, 8 ), size = Read( 88 + level * 24, 8 );
-			if ( w > UINT64_MAX / h / ( wide ? 8 : 4 ) )
+			const uint64_t blocksWide = ( w + block.width - 1 ) / block.width, blocksHigh = ( h + block.height - 1 ) / block.height;
+			if ( blocksWide > UINT64_MAX / blocksHigh / block.bytes )
 				return false;
-			const uint64_t expected = w * h * ( wide ? 8 : 4 );
-			if ( size != expected || Read( 96 + level * 24, 8 ) != expected || !InBounds( offset, size ) || offset < dfd + dfdSize || ( kvdSize && offset < kvd + kvdSize ) || offset % ( wide ? 8 : 4 ) )
+			const uint64_t expected = blocksWide * blocksHigh * block.bytes;
+			if ( size != expected || Read( 96 + level * 24, 8 ) != expected || !InBounds( offset, size ) || offset < dfd + dfdSize || ( kvdSize && offset < kvd + kvdSize ) || offset % std::lcm( 4u, block.bytes ) )
 				return false;
 			for ( const auto &[ start, count ] : ranges )
 				if ( offset < start + count && start < offset + size )
@@ -159,6 +163,11 @@ namespace xrlib
 		outImage.height = static_cast< int >( height );
 		outImage.bits = wide ? 16 : 8;
 		outImage.component = 4;
+
+		// Compressed images keep UNORM storage so color textures can add an sRGB view like RGBA8
+		if ( astc )
+			outImage.compressedFormat = ( format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK || format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK ) ? VK_FORMAT_ASTC_4x4_UNORM_BLOCK : VK_FORMAT_ASTC_6x6_UNORM_BLOCK;
+
 		return true;
 	}
 
@@ -646,7 +655,9 @@ namespace xrlib
 		outTexture->bitsPerChannel = image.bits;
 
 		// Determine format based on components and bits
-		if ( image.bits == 8 )
+		if ( image.compressedFormat != VK_FORMAT_UNDEFINED )
+			outTexture->format = image.compressedFormat;
+		else if ( image.bits == 8 )
 		{
 			switch ( image.component )
 			{
@@ -748,7 +759,22 @@ namespace xrlib
 				return ( material.pbrData.baseColorTexture && material.pbrData.baseColorTexture->textureIndex == textureIndex ) ||
 					( material.emissiveTexture && material.emissiveTexture->textureIndex == textureIndex );
 			} );
-			const bool srgbView = colorTexture && outTexture->format == VK_FORMAT_R8G8B8A8_UNORM;
+			const VkFormat srgbFormat = colorTexture ? vkutils::GetSrgbFormat( outTexture->format ) : VK_FORMAT_UNDEFINED;
+			const bool srgbView = srgbFormat != VK_FORMAT_UNDEFINED;
+
+			// Prepared mobile textures need ASTC, bail out with a clear error rather than failing image creation
+			if ( image.compressedFormat != VK_FORMAT_UNDEFINED )
+			{
+				VkFormatProperties properties;
+				vkGetPhysicalDeviceFormatProperties( m_pSession->GetVulkan()->GetVkPhysicalDevice(), outTexture->format, &properties );
+				if ( !( properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) )
+				{
+					LogError( XRLIB_NAME, "This GPU can't sample ASTC textures, use the uncompressed prepared assets: %s", outTexture->name.c_str() );
+					outTexture->data.clear();
+					outTexture->mips.clear();
+					return;
+				}
+			}
 
 			// Create image
 			VK_CHECK_RESULT( vkutils::CreateImage(
@@ -767,7 +793,7 @@ namespace xrlib
 			VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->view, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, outTexture->format, VK_IMAGE_ASPECT_COLOR_BIT, outTexture->samplerConfig.mipLevels ) );
 
 			if ( srgbView )
-				VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->srgbView, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, outTexture->samplerConfig.mipLevels ) );
+				VK_CHECK_RESULT( vkutils::CreateImageView( outTexture->srgbView, m_pSession->GetVulkan()->GetVkLogicalDevice(), outTexture->image, srgbFormat, VK_IMAGE_ASPECT_COLOR_BIT, outTexture->samplerConfig.mipLevels ) );
 
 			// Upload image to gpu buffer and transition image for shader reads
 			if ( !deferUploads && !m_options.batchTextureUploads )

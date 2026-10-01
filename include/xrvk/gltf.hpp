@@ -92,6 +92,7 @@ namespace xrlib
 		int bits = 8;
 		std::vector< uint8_t > image;
 		std::vector< vkutils::SImageMip > mips; // Prepared mip ranges; empty for PNG/JPEG
+		VkFormat compressedFormat = VK_FORMAT_UNDEFINED; // Prepared ASTC blocks as a UNORM format (undefined for pixels)
 	};
 
 	/// <summary>CPU wall-clock durations in milliseconds for completed loading stages</summary>

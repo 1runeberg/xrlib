@@ -44,6 +44,19 @@ namespace vkutils
 
 	void UploadTextureDataToImage( VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue graphicsQueue, VkImage image, const std::vector< uint8_t > &imageData, uint32_t width, uint32_t height, VkFormat format );
 
+	/// <summary>Texel block footprint of an upload format (uncompressed formats use 1x1 blocks)</summary>
+	struct SFormatBlock
+	{
+		uint32_t width = 1;
+		uint32_t height = 1;
+		uint32_t bytes = 0; // Zero when the format isn't supported for uploads
+	};
+
+	SFormatBlock GetFormatBlock( VkFormat format );
+
+	/// <summary>sRGB view format for a UNORM image (undefined when there isn't one)</summary>
+	VkFormat GetSrgbFormat( VkFormat format );
+
 	/// <summary>Byte range for one precomputed mip level in an image's pixel data</summary>
 	struct SImageMip
 	{
@@ -92,7 +105,7 @@ namespace vkutils
 		VkResult m_result = VK_NOT_READY;
 	};
 
-	/// <summary>Uploads 8/16-bit UNORM images with one staging allocation, submission and fence wait</summary>
+	/// <summary>Uploads 8/16-bit UNORM or ASTC images with one staging allocation, submission and fence wait</summary>
 	/// <param name="images">Images in UNDEFINED layout; pixels must remain valid until this call returns</param>
 	/// <returns>Vulkan result. Success leaves all supplied mip levels ready for fragment shader reads</returns>
 	/// <remarks>The caller must serialize access to the command pool and graphics queue.</remarks>
