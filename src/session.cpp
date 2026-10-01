@@ -187,7 +187,8 @@ namespace xrlib
 			{
 				// We'll wait indefinitely (-1ms) for android poll results until we get to the android app resumed state
 				// and/or the openxr session has started.
-				const int nTimeout = ( !m_pInstance->androidAppState.Resumed && IsSessionRunning() ) ? -1 : 0;
+				const bool bDestroying = m_pInstance->GetAndroidApp()->destroyRequested != 0;
+				const int nTimeout = ( !m_pInstance->androidAppState.Resumed && IsSessionRunning() && !bDestroying ) ? -1 : 0;
 
 				int nEvents;
 				struct android_poll_source *androidPollSource;
