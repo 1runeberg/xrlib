@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <iostream>
 #include <random>
+#include <set>
 #include <stdexcept>
 
 namespace xrlib::tools
@@ -24,7 +25,7 @@ namespace xrlib::tools
 		namespace fs = std::filesystem;
 
 		// Bump when prepared outputs change for the same inputs and ktx version
-		constexpr std::string_view k_PreparedFormat = "xrvk gltf ktx2 1";
+		constexpr std::string_view k_PreparedFormat = "xrvk gltf ktx2 2";
 		constexpr std::array< uint8_t, 8 > k_PngSignature { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a };
 
 		struct SManifest
@@ -203,13 +204,19 @@ namespace xrlib::tools
 		for ( const fastgltf::Buffer &gltfBuffer : asset.buffers )
 			buffers.push_back( SourceBytes( gltfBuffer.data ) );
 
+		// Image files are replaced by the KTX2 textures, so they're fingerprinted but not copied
 		std::vector< std::span< const uint8_t > > images;
+		std::set< fs::path > imageFiles;
 		for ( const fastgltf::Image &image : asset.images )
 		{
 			const auto *view = std::get_if< fastgltf::sources::BufferView >( &image.data );
 			if ( !view )
 			{
 				images.push_back( SourceBytes( image.data ) );
+
+				if ( const auto *uri = std::get_if< fastgltf::sources::URI >( &image.data ) )
+					imageFiles.insert( fs::weakly_canonical( directory / uri->uri.fspath() ) );
+
 				continue;
 			}
 
@@ -352,6 +359,9 @@ namespace xrlib::tools
 		// Preserve source geometry and material metadata, textures are supplied by the sidecar directory
 		for ( const auto &[ path, data ] : dependencies )
 		{
+			if ( imageFiles.contains( path ) )
+				continue;
+
 			const fs::path destination = staging.path / path.lexically_relative( directory );
 			fs::create_directories( destination.parent_path() );
 			WriteFile( destination, data );
@@ -368,6 +378,20 @@ namespace xrlib::tools
 			const fs::path destination = output / name;
 			fs::create_directories( destination.parent_path() );
 			fs::rename( staging.path / name, destination );
+		}
+
+		// Drop outputs an earlier run produced that aren't part of this one
+		if ( previous )
+		{
+			for ( const auto &[ name, size ] : previous->outputs )
+			{
+				const fs::path stale = output / name;
+				if ( !manifest.outputs.contains( name ) && IsWithin( fs::weakly_canonical( stale ), output ) )
+				{
+					std::error_code error;
+					fs::remove( stale, error );
+				}
+			}
 		}
 
 		// Write the manifest last so an interrupted run is regenerated next time
