@@ -21,6 +21,10 @@ set(CMAKE_SUPPRESS_REGENERATION true)
 set(XRLIB "xrlib")
 project("${XRLIB}" VERSION 0.5.1.0)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/platforms/visionos/CMakeLists.txt")
+endif()
+
 # Set project directories
 set(XRLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(XRLIB_SRC "${XRLIB_ROOT}/src")
@@ -197,7 +201,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 endif()
 
 # Advanced debug options (desktop only)
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "visionOS")
     if(ENABLE_RENDERDOC)
         add_definitions(-DRENDERDOC_ENABLE)
         message(STATUS "[${XRLIB}] DEBUG: Renderdoc frame capture enabled.")
@@ -312,6 +316,10 @@ if(BUILD_AS_STATIC)
 else()
     add_library(${XRLIB} SHARED ${ALLSOURCE})
     message(STATUS "[${XRLIB}] Project library defined. Will build as: SHARED")
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "visionOS")
+    target_compile_definitions(${XRLIB} PUBLIC XR_USE_PLATFORM_VISIONOS)
 endif()
 
 # Disable Windows min/max macros for xrlib and its consumers

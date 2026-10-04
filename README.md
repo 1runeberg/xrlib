@@ -15,9 +15,10 @@ Explore xrlib's capabilities through a collection of example applications availa
 - [passthroughxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-03_passthroughxr) - Meta Quest Passthrough implementation 
 - [handtrackingxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-04_handtrackingxr) - Hand tracking visualization
 - [inputxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-05_inputxr) - Full-featured input handling, multi-threading via xrlib's xr dynamic thread pool manager, and PBR rendering
-- [interactionsxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-06_interactionsxr) - Demonstrates the EXT Hand Interaction extension, including passthrough and simultaneous hand/controller tracking, and system properties querying.
+- [gltfxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-06_gltfxr) - glTF model viewer with PBR materials, selectable animations and passthrough on Apple Vision Pro and Meta Quest
 
-Each demo provides clear, practical implementation examples designed to highlight specific xrlib features. Desktop (Windows, Linux) and Android builds are supported for all demos.
+See each demo's README for supported platforms and build instructions. The displayxr and
+gltfxr demos include visionOS builds using the public vision-openxr SDK.
 
 ## Building
 
@@ -115,6 +116,32 @@ Additional requirements:
         -f platforms/steamos/Dockerfile .
     ```
 
+#### visionOS
+xrlib and xrvk use the app-embedded vision-openxr runtime and MoltenVK on Apple Vision Pro.
+Requires visionOS 27 or later, CMake 3.28 or newer, Xcode with the matching visionOS SDK and the
+[public vision-openxr SDK](https://github.com/1runeberg/vision-openxr-sdk).
+Initialise the SDK's submodules and place its checkout alongside xrlib.
+
+```sh
+cmake -S . -B build/visionos -G Xcode \
+    -DCMAKE_SYSTEM_NAME=visionOS \
+    -DCMAKE_OSX_ARCHITECTURES=arm64 \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=27.0 \
+    -DVISION_OPENXR_SDK="$PWD/../vision-openxr-sdk"
+cmake --build build/visionos --config Release
+```
+
+The config in `platforms/visionos` links the SDK's Vulkan runtime and MoltenVK
+instead of the desktop OpenXR loader. Static libraries are built by default,
+with outputs under `build/visionos/lib/<config>`. Use `ENABLE_XRVK=OFF` for a
+build without the renderer. The SDK currently supplies device frameworks only.
+
+Apps linking the CMake `xrlib` target receive its link dependencies. The app
+must embed and sign `VisionOpenXR.framework` and `MoltenVK.framework`, and
+provide the SDK's immersive host. See [displayxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-02_displayxr#visionos)
+or [gltfxr](https://github.com/1runeberg/xrlib-demos/tree/main/demo-06_gltfxr#build-for-visionos)
+for app setup.
+
 #### Android
 Additional requirements:
     - Android NDK
@@ -188,7 +215,16 @@ To verify your build:
 ## Development
 
 When developing with the library:
-    - Header files are in `include` directory
-    - Source files are in `src` directory
-    - Shader sources are in `res/shaders/src`
-    - Build artifacts are placed in `bin` and `lib` directories
+
+- Header files are in `include` directory
+- Source files are in `src` directory
+- Shader sources are in `res/shaders/src`
+- Build artifacts are placed in `bin` and `lib` directories
+
+## Connect with me here:
+
+- GitHub: https://github.com/1runeberg
+- Website: http://runeberg.io
+- Bluesky: https://runeberg.social
+- Twitter: https://twitter.com/1runeberg
+- YouTube: https://www.youtube.com/@1RuneBerg
