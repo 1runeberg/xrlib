@@ -142,7 +142,8 @@ namespace xrlib
 			VkMemoryPropertyFlags memPropFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			VkAllocationCallbacks *pCallbacks = nullptr );
 
-		CDeviceBuffer *UpdateInstancesBuffer( VkCommandBuffer transferCmdBuffer );
+		// Writes instance matrices in place, earlier GPU reads must have completed
+		VkResult UpdateInstancesBuffer();
 		
 		void ResetScale( float x, float y, float z, uint32_t unInstanceIndex = 0 );
 		void ResetScale( float fScale, uint32_t unInstanceIndex = 0 );
@@ -246,19 +247,6 @@ namespace xrlib
 			std::vector< XrCompositionLayerBaseHeader * > frameLayers;
 			std::vector< XrCompositionLayerBaseHeader * > preAppFrameLayers;
 			std::vector< XrCompositionLayerBaseHeader * > postAppFrameLayers;
-
-			std::vector< CDeviceBuffer * > vecStagingBuffers;
-
-			void ClearStagingBuffers()
-			{
-				for ( CDeviceBuffer *pStagingBuffer : vecStagingBuffers )
-				{
-					if ( pStagingBuffer != nullptr )
-						delete pStagingBuffer;
-				}
-
-				vecStagingBuffers.clear();
-			}
 
 			SFrameState( float near, float far, float min = 0.f, float max = 1.f )
 				: nearZ( near )

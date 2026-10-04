@@ -249,9 +249,6 @@ namespace xrlib
 			 VkCommandBuffer vkRenderCommandBuffer = VK_NULL_HANDLE;
 			 VkFence vkRenderCommandFence = VK_NULL_HANDLE;
 
-			 VkCommandBuffer vkTransferCommandBuffer = VK_NULL_HANDLE;
-			 VkFence vkTransferCommandFence = VK_NULL_HANDLE;
-
 			 void SetImageViewArray( std::array< VkImageView, 4 > &arrImageViews )
 			 {
 				 arrImageViews[ 0 ] = vkMSAAColorView;					// For msaa rendering (color)
@@ -494,15 +491,8 @@ namespace xrlib
 			const uint32_t unDepthImageIndex = 0 );
 
 		// On failure, stop rendering and wait for GPU completion before releasing resources
-		VkResult SubmitDraw(
-			const uint32_t unSwpachainImageIndex,
-			std::vector< CDeviceBuffer * > &vecStagingBuffers,
-			const uint32_t timeoutNs = 1000000000,
-			const VkCommandBufferResetFlags transferBufferResetFlags = 0,
-			const VkCommandBufferResetFlags renderBufferResetFlags = 0 );
+		VkResult SubmitDraw( const uint32_t unSwpachainImageIndex, const uint32_t timeoutNs = 1000000000, const VkCommandBufferResetFlags renderBufferResetFlags = 0 );
 
-		VkResult BeginBufferUpdates( const uint32_t unSwpachainImageIndex );
-		VkResult SubmitBufferUpdates( const uint32_t unSwpachainImageIndex );
 		void CalculateViewMatrices( std::array< XrMatrix4x4f, 2 > &outViewMatrices, const XrVector3f *eyeScale );
 
 		VkDescriptorPool CreateDescriptorPool( 
