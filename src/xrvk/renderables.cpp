@@ -102,15 +102,17 @@ namespace xrlib
 			return VK_SUCCESS;
 
 		const VkDeviceSize size = instanceMatrices.size() * sizeof( XrMatrix4x4f );
-		if ( !m_pInstanceBuffer || size > m_pInstanceBuffer->GetMemorySize() )
+		if ( !m_pInstanceBuffer || size > m_pInstanceBuffer->GetBufferSize() )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
-		// Instance buffers are host visible and coherent, so the mapping stays open for per-frame writes
 		const VkResult result = m_pInstanceBuffer->MapMemory();
 		if ( result != VK_SUCCESS )
 			return result;
 
 		memcpy( m_pInstanceBuffer->GetMappedData(), instanceMatrices.data(), size );
+		if ( !( m_pInstanceBuffer->GetMemoryPropertyFlags() & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ) )
+			return m_pInstanceBuffer->FlushMemory();
+
 		return VK_SUCCESS;
 	}
 
