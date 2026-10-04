@@ -142,7 +142,7 @@ namespace xrlib
 			VkMemoryPropertyFlags memPropFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			VkAllocationCallbacks *pCallbacks = nullptr );
 
-		// Writes instance matrices in place, earlier GPU reads must have completed
+		// Requires host-visible memory and completed GPU reads
 		VkResult UpdateInstancesBuffer();
 		
 		void ResetScale( float x, float y, float z, uint32_t unInstanceIndex = 0 );

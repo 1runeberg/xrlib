@@ -82,6 +82,8 @@ namespace xrlib
 		if ( result != VK_SUCCESS )
 			return result;
 
+		m_vkBufferSize = unSize;
+		m_memPropFlags = memPropFlags;
 		m_vkMemoryAlignment = memReqs.alignment;
 		m_vkMemorySize = memReqs.size;
 

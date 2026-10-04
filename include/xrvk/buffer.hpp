@@ -41,7 +41,8 @@ namespace xrlib
 		inline VkDescriptorBufferInfo *GetBufferInfo() { return &m_vkBufferInfo; }
 		inline VkDeviceMemory GetDeviceMemory() { return m_vkDeviceMemory; }
 		inline void *GetMappedData() { return m_pData; }
-		inline VkDeviceSize GetMemorySize() const { return m_vkMemorySize; }
+		inline VkDeviceSize GetBufferSize() const { return m_vkBufferSize; }
+		inline VkMemoryPropertyFlags GetMemoryPropertyFlags() const { return m_memPropFlags; }
 
 	  private:
 		CSession *m_pSession = nullptr;
@@ -50,6 +51,8 @@ namespace xrlib
 		VkDeviceMemory m_vkDeviceMemory = VK_NULL_HANDLE;
 		VkDeviceSize m_vkMemoryAlignment = 0;
 		VkDeviceSize m_vkMemorySize = VK_WHOLE_SIZE;
+		VkDeviceSize m_vkBufferSize = 0;
+		VkMemoryPropertyFlags m_memPropFlags = 0;
 
 		VkAllocationCallbacks m_callbacks {};
 		const VkAllocationCallbacks *m_pCallbacks = nullptr;

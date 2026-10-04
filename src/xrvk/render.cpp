@@ -2037,7 +2037,7 @@ namespace xrlib
 					vkCmdNextSubpass( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, VK_SUBPASS_CONTENTS_INLINE );
 				}
 
-				// Write model matrices straight into the instance buffers, SubmitDraw has waited for the previous frame's reads
+				// SubmitDraw waits for GPU reads before the next frame updates instances
 				const XrTime renderTime = state.frameState.predictedDisplayTime;
 				for ( auto &renderable : pRenderInfo->vecRenderables )
 				{
