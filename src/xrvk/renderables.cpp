@@ -96,26 +96,22 @@ namespace xrlib
 		return pBuffer->Init( usageFlags, memPropFlags, unSize, pData, true, pCallbacks );
 	}
 
-	CDeviceBuffer *CRenderable::UpdateInstancesBuffer( VkCommandBuffer transferCmdBuffer )
+	VkResult CRenderable::UpdateInstancesBuffer()
 	{
-		// Calculate buffer size for instance matrices
-		VkDeviceSize bufferSize = instanceMatrices.size() * sizeof( XrMatrix4x4f );
+		if ( instanceMatrices.empty() )
+			return VK_SUCCESS;
 
-		// Create staging buffer
-		CDeviceBuffer *pStagingBuffer = new CDeviceBuffer( m_pSession );
-		const VkResult result = pStagingBuffer->Init( VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, bufferSize, instanceMatrices.data() );
+		const VkDeviceSize size = instanceMatrices.size() * sizeof( XrMatrix4x4f );
+		if ( !m_pInstanceBuffer || size > m_pInstanceBuffer->GetMemorySize() )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		// Instance buffers are host visible and coherent, so the mapping stays open for per-frame writes
+		const VkResult result = m_pInstanceBuffer->MapMemory();
 		if ( result != VK_SUCCESS )
-		{
-			delete pStagingBuffer;
-			return nullptr;
-		}
+			return result;
 
-		// Copy buffer
-		VkBufferCopy bufferCopyRegion = {};
-		bufferCopyRegion.size = bufferSize;
-		vkCmdCopyBuffer( transferCmdBuffer, pStagingBuffer->GetVkBuffer(), m_pInstanceBuffer->GetVkBuffer(), 1, &bufferCopyRegion );
-
-		return pStagingBuffer;
+		memcpy( m_pInstanceBuffer->GetMappedData(), instanceMatrices.data(), size );
+		return VK_SUCCESS;
 	}
 
 	void CRenderable::ResetScale( float x, float y, float z, uint32_t unInstanceIndex )
@@ -178,7 +174,6 @@ namespace xrlib
 	CRenderInfo::~CRenderInfo() 
 	{
 		vkDeviceWaitIdle( m_device );
-		state.ClearStagingBuffers();
 
 		if ( pSceneLightingBuffer )
 			delete pSceneLightingBuffer;

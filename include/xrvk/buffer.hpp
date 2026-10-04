@@ -41,6 +41,7 @@ namespace xrlib
 		inline VkDescriptorBufferInfo *GetBufferInfo() { return &m_vkBufferInfo; }
 		inline VkDeviceMemory GetDeviceMemory() { return m_vkDeviceMemory; }
 		inline void *GetMappedData() { return m_pData; }
+		inline VkDeviceSize GetMemorySize() const { return m_vkMemorySize; }
 
 	  private:
 		CSession *m_pSession = nullptr;

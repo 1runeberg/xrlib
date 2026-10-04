@@ -1,5 +1,5 @@
 /* 
- * Copyright 2024,2025 Copyright Rune Berg 
+ * Copyright 2024-26 Rune Berg
  * https://github.com/1runeberg | http://runeberg.io | https://runeberg.social | https://www.youtube.com/@1RuneBerg
  * Licensed under Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
  * SPDX-License-Identifier: Apache-2.0
@@ -224,8 +224,6 @@ namespace xrlib
 					vkDestroySampler( device, target.vkColorImageDescriptor.sampler, nullptr );
 				if ( target.vkRenderCommandFence )
 					vkDestroyFence( device, target.vkRenderCommandFence, nullptr );
-				if ( target.vkTransferCommandFence )
-					vkDestroyFence( device, target.vkTransferCommandFence, nullptr );
 			}
 			for ( auto pass : vecRenderPasses )
 				if ( pass )
@@ -564,18 +562,9 @@ namespace xrlib
 			if ( result != VK_SUCCESS )
 				return XR_ERROR_RUNTIME_FAILURE;
 
-			commandBufferAlloc.commandPool = m_vkTransferCommandPool;
-			result = vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &m_vecMultiviewRenderTargets.back().vkTransferCommandBuffer );
-			if ( result != VK_SUCCESS )
-				return XR_ERROR_RUNTIME_FAILURE;
-
 			// Fences
 			VkFenceCreateInfo fenceCI { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 			result = vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &m_vecMultiviewRenderTargets.back().vkRenderCommandFence );
-			if ( result != VK_SUCCESS )
-				return XR_ERROR_RUNTIME_FAILURE;
-
-			result = vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &m_vecMultiviewRenderTargets.back().vkTransferCommandFence );
 			if ( result != VK_SUCCESS )
 				return XR_ERROR_RUNTIME_FAILURE;
 		}
@@ -1895,9 +1884,6 @@ namespace xrlib
 		auto FailFrame = [ & ]( XrResult failure )
 		{
 			const VkResult idle = vkDeviceWaitIdle( GetLogicalDevice() );
-			if ( idle == VK_SUCCESS || idle == VK_ERROR_DEVICE_LOST )
-				state.ClearStagingBuffers();
-
 			if ( idle == VK_SUCCESS && colorReady )
 				m_pSession->ReleaseFrameImage( GetColorSwapchain() );
 			if ( idle == VK_SUCCESS && depthReady )
@@ -2051,34 +2037,17 @@ namespace xrlib
 					vkCmdNextSubpass( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, VK_SUBPASS_CONTENTS_INLINE );
 				}
 
-				// Copy model matrices to gpu buffer
-				state.ClearStagingBuffers();
+				// Write model matrices straight into the instance buffers, SubmitDraw has waited for the previous frame's reads
+				const XrTime renderTime = state.frameState.predictedDisplayTime;
+				for ( auto &renderable : pRenderInfo->vecRenderables )
 				{
-					// Begin buffer recording to gpu
-					gpuResult = BeginBufferUpdates( state.unCurrentSwapchainImage_Color );
-					if ( gpuResult != VK_SUCCESS )
-						return FailGPU( gpuResult );
+					if ( !renderable->isVisible )
+						continue;
 
-					// Update asset buffers
-					XrTime renderTime = state.frameState.predictedDisplayTime;
+					for ( uint32_t i = 0; i < renderable->instances.size(); i++ )
+						renderable->UpdateModelMatrix( i, m_pSession->GetAppSpace(), renderTime );
 
-					for ( auto &renderable : pRenderInfo->vecRenderables )
-					{
-						if ( !renderable->isVisible )
-							continue;
-
-						// Update matrices (for each instance)
-						for ( uint32_t i = 0; i < renderable->instances.size(); i++ )
-							renderable->UpdateModelMatrix( i, m_pSession->GetAppSpace(), renderTime );
-
-						// Add to render
-						state.vecStagingBuffers.push_back( renderable->UpdateInstancesBuffer( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkTransferCommandBuffer ) );
-						if ( !state.vecStagingBuffers.back() )
-							return FailGPU( VK_ERROR_OUT_OF_DEVICE_MEMORY );
-					}
-
-					// Submit to gpu
-					gpuResult = SubmitBufferUpdates( state.unCurrentSwapchainImage_Color );
+					gpuResult = renderable->UpdateInstancesBuffer();
 					if ( gpuResult != VK_SUCCESS )
 						return FailGPU( gpuResult );
 				}
@@ -2132,8 +2101,8 @@ namespace xrlib
 						static_cast< CRenderModel * >( draw.pRenderable )->DrawSection( commands, *pRenderInfo, draw.section, draw.instance );
 				}
 
-				// Submit draw calls to gpu - this will also clear the staging buffers (if any)
-				gpuResult = SubmitDraw( state.unCurrentSwapchainImage_Color, state.vecStagingBuffers );
+				// Submit draw calls to gpu
+				gpuResult = SubmitDraw( state.unCurrentSwapchainImage_Color );
 				if ( gpuResult != VK_SUCCESS )
 					return FailGPU( gpuResult );
 
@@ -2231,28 +2200,11 @@ namespace xrlib
 		return VK_SUCCESS;
 	}
 
-	VkResult CStereoRender::SubmitDraw(
-		const uint32_t unSwpachainImageIndex,
-		std::vector< CDeviceBuffer * > &vecStagingBuffers,
-		const uint32_t timeoutNs,
-		const VkCommandBufferResetFlags transferBufferResetFlags,
-		const VkCommandBufferResetFlags renderBufferResetFlags )
+	VkResult CStereoRender::SubmitDraw( const uint32_t unSwpachainImageIndex, const uint32_t timeoutNs, const VkCommandBufferResetFlags renderBufferResetFlags )
 	{
 		// End render recording
 		vkCmdEndRenderPass( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer );
 		VK_CHECK_RETURN( vkEndCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer ) );
-
-		// Wait for any data transfer operations to finish
-		// @todo start recording for next frame
-		VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence, VK_TRUE, timeoutNs ) );
-		VK_CHECK_RETURN( vkResetFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence ) );
-		VK_CHECK_RETURN( vkResetCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, transferBufferResetFlags ) );
-
-		// Clear/free staging buffer memory
-		for ( CDeviceBuffer *pStagingBuffer : vecStagingBuffers )
-			delete pStagingBuffer;
-
-		vecStagingBuffers.clear();
 
 		// Execute render commands (requires exclusive access to vkQueue)
 		// safest after wait swapchain image
@@ -2266,32 +2218,6 @@ namespace xrlib
 		VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence, VK_TRUE, timeoutNs ) );
 		VK_CHECK_RETURN( vkResetFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence ) );
 		VK_CHECK_RETURN( vkResetCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, renderBufferResetFlags ) );
-		return VK_SUCCESS;
-	}
-
-	VkResult CStereoRender::BeginBufferUpdates( const uint32_t unSwpachainImageIndex )
-	{ 
-		VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-		VK_CHECK_RETURN( vkBeginCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, &beginInfo ) );
-		return VK_SUCCESS;
-	}
-
-	VkResult CStereoRender::SubmitBufferUpdates( const uint32_t unSwpachainImageIndex )
-	{
-		VkMemoryBarrier barrier { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-		vkCmdPipelineBarrier( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr );
-
-		VK_CHECK_RETURN( vkEndCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer ) );
-
-		VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandBuffer;
-
-		VK_CHECK_RETURN( vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Graphics(), 1, &submitInfo, m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkTransferCommandFence ) );
 		return VK_SUCCESS;
 	}
 
