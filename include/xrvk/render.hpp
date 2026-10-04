@@ -246,9 +246,6 @@ namespace xrlib
 			 std::vector< VkImageView > depthViews;
 			 std::vector< VkFramebuffer > framebuffers;
 
-			 VkCommandBuffer vkRenderCommandBuffer = VK_NULL_HANDLE;
-			 VkFence vkRenderCommandFence = VK_NULL_HANDLE;
-
 			 void SetImageViewArray( std::array< VkImageView, 4 > &arrImageViews )
 			 {
 				 arrImageViews[ 0 ] = vkMSAAColorView;					// For msaa rendering (color)
@@ -256,6 +253,13 @@ namespace xrlib
 				 arrImageViews[ 2 ] = vkMSAADepthView;					// For msaa rendering (depth)
 				 arrImageViews[ 3 ] = vkDepthImageView;					// As msaa resolve target, depth texture from openxr runtime
 			 }
+		};
+
+		// Command buffer and completion fence for one frame in flight
+		struct SFrameInFlight
+		{
+			VkCommandBuffer vkCommandBuffer = VK_NULL_HANDLE;
+			VkFence vkFence = VK_NULL_HANDLE;
 		};
 
 #pragma endregion TYPES
@@ -490,8 +494,11 @@ namespace xrlib
 			const VkSubpassContents subpass = VK_SUBPASS_CONTENTS_INLINE,
 			const uint32_t unDepthImageIndex = 0 );
 
-		// On failure, stop rendering and wait for GPU completion before releasing resources
-		VkResult SubmitDraw( const uint32_t unSwpachainImageIndex, const uint32_t timeoutNs = 1000000000, const VkCommandBufferResetFlags renderBufferResetFlags = 0 );
+		// Waits until the GPU has finished the frame that last used this frame in flight, then resets its command buffer
+		VkResult WaitForFrameInFlight( CRenderInfo *pRenderInfo, const uint64_t timeoutNs = 1000000000 );
+
+		// Submits without waiting, on failure stop rendering and wait for GPU completion before releasing resources
+		VkResult SubmitDraw();
 
 		void CalculateViewMatrices( std::array< XrMatrix4x4f, 2 > &outViewMatrices, const XrVector3f *eyeScale );
 
@@ -595,6 +602,7 @@ namespace xrlib
 		std::vector< XrViewConfigurationView > &GetEyeConfigs() { return m_vecEyeConfigs; }
 		std::vector< XrView > &GetEyeViews() { return m_vecEyeViews; }
 		std::vector< SMultiviewRenderTarget > &GetMultiviewRenderTargets() { return m_vecMultiviewRenderTargets;  }
+		VkCommandBuffer GetFrameCommandBuffer() { return m_vecFramesInFlight.at( m_unFrameIndex ).vkCommandBuffer; }
 
 		XrSwapchainImageVulkan2KHR *GetSwapchainColorImage( uint32_t unIndex ) { return &m_vecSwapchainColorImages[ unIndex ]; }
 		XrSwapchainImageVulkan2KHR *GetSwapchainDepthImage( uint32_t unIndex ) { return &m_vecSwapchainColorImages[ unIndex ]; }
@@ -650,6 +658,12 @@ namespace xrlib
 		std::vector< XrSwapchainImageVulkan2KHR > m_vecSwapchainColorImages;
 		std::vector< XrSwapchainImageVulkan2KHR > m_vecSwapchainDepthImages;
 		std::vector< SMultiviewRenderTarget > m_vecMultiviewRenderTargets;
+
+		// Created on first use to match the CRenderInfo frames in flight
+		std::vector< SFrameInFlight > m_vecFramesInFlight;
+		uint32_t m_unFrameIndex = 0;
+		VkResult CreateFramesInFlight( uint32_t unCount );
+		void DestroyFramesInFlight();
 
 		// Contains texture information such as recommended and max extents (width, height)
 		std::vector< XrViewConfigurationView > m_vecEyeConfigs;

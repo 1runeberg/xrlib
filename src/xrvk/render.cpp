@@ -222,9 +222,9 @@ namespace xrlib
 					vkFreeMemory( device, target.vkMSAADepthMemory, nullptr );
 				if ( target.vkColorImageDescriptor.sampler )
 					vkDestroySampler( device, target.vkColorImageDescriptor.sampler, nullptr );
-				if ( target.vkRenderCommandFence )
-					vkDestroyFence( device, target.vkRenderCommandFence, nullptr );
 			}
+
+			DestroyFramesInFlight();
 			for ( auto pass : vecRenderPasses )
 				if ( pass )
 					vkDestroyRenderPass( device, pass, nullptr );
@@ -551,22 +551,6 @@ namespace xrlib
 			}
 			m_vecMultiviewRenderTargets.back().vkDepthTexture = m_vecSwapchainDepthImages.front().image;
 			m_vecMultiviewRenderTargets.back().vkDepthImageView = m_vecMultiviewRenderTargets.back().depthViews.front();
-
-			// Command buffers
-			VkCommandBufferAllocateInfo commandBufferAlloc { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-			commandBufferAlloc.pNext = nullptr;
-			commandBufferAlloc.commandPool = m_vkRenderCommandPool;
-			commandBufferAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-			commandBufferAlloc.commandBufferCount = 1;
-			result = vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &m_vecMultiviewRenderTargets.back().vkRenderCommandBuffer );
-			if ( result != VK_SUCCESS )
-				return XR_ERROR_RUNTIME_FAILURE;
-
-			// Fences
-			VkFenceCreateInfo fenceCI { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-			result = vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &m_vecMultiviewRenderTargets.back().vkRenderCommandFence );
-			if ( result != VK_SUCCESS )
-				return XR_ERROR_RUNTIME_FAILURE;
 		}
 
 		return XR_SUCCESS;
@@ -1736,12 +1720,14 @@ namespace xrlib
 
 		VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorSetLayout( outPipelines.pbrFragmentDescriptorLayout, pbrBindings ) );
 
-		VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorPool( outPipelines.pbrFragmentDescriptorPool, outPipelines.pbrFragmentDescriptorLayout, poolCount ) );
+		// Materials get one set per frame in flight
+		const uint32_t unFrames = pRenderInfo->GetFramesInFlight();
+		VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorPool( outPipelines.pbrFragmentDescriptorPool, outPipelines.pbrFragmentDescriptorLayout, poolCount * unFrames ) );
 
 		// Setup lighting descriptors
-		std::array< VkDescriptorPoolSize, 2 > lightingPoolSizes { VkDescriptorPoolSize { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 }, VkDescriptorPoolSize { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 } };
+		std::array< VkDescriptorPoolSize, 2 > lightingPoolSizes { VkDescriptorPoolSize { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, unFrames }, VkDescriptorPoolSize { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * unFrames } };
 
-		VkDescriptorPoolCreateInfo lightingPoolInfo { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 1, .poolSizeCount = uint32_t( lightingPoolSizes.size() ), .pPoolSizes = lightingPoolSizes.data() };
+		VkDescriptorPoolCreateInfo lightingPoolInfo { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = unFrames, .poolSizeCount = uint32_t( lightingPoolSizes.size() ), .pPoolSizes = lightingPoolSizes.data() };
 
 		VK_CHECK_RESULT( pRenderInfo->pDescriptors->CreateDescriptorPool( pRenderInfo->lightingPoolId, lightingPoolInfo ) );
 
@@ -1988,7 +1974,20 @@ namespace xrlib
 					pRenderInfo->pSceneLighting->outputSRGB = m_vkColorFormat == VK_FORMAT_R8G8B8A8_SRGB || m_vkColorFormat == VK_FORMAT_B8G8R8A8_SRGB;
 				}
 
+				// Wait for the GPU to finish the last frame that used this frame in flight
+				gpuResult = WaitForFrameInFlight( pRenderInfo );
+				if ( gpuResult != VK_SUCCESS )
+					return FailGPU( gpuResult );
+
+				if ( pRenderInfo->pSceneLighting )
+				{
+					gpuResult = pRenderInfo->UpdateSceneLighting();
+					if ( gpuResult != VK_SUCCESS )
+						return FailGPU( gpuResult );
+				}
+
 				// Begin draw commands for rendering
+				const VkCommandBuffer commands = GetFrameCommandBuffer();
 				gpuResult = BeginDraw( state.unCurrentSwapchainImage_Color, state.clearValues, true, renderPass, VK_SUBPASS_CONTENTS_INLINE, state.unCurrentSwapchainImage_Depth );
 				if ( gpuResult != VK_SUCCESS )
 					return FailGPU( gpuResult );
@@ -1999,26 +1998,26 @@ namespace xrlib
 					for ( size_t eyeIndex = 0; eyeIndex < stencils.size(); ++eyeIndex )
 					{
 						// Push constants for the vertex shader
-						vkCmdPushConstants( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, pRenderInfo->stencilLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, k_pcrSize, state.eyeProjectionMatrices.data() );
+						vkCmdPushConstants( commands, pRenderInfo->stencilLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, k_pcrSize, state.eyeProjectionMatrices.data() );
 
 						// Set stencil reference to write to the stencil mask
-						vkCmdSetStencilReference( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, VK_STENCIL_FACE_FRONT_AND_BACK, 1 );
+						vkCmdSetStencilReference( commands, VK_STENCIL_FACE_FRONT_AND_BACK, 1 );
 
 						// Bind the vismask pipeline
-						vkCmdBindPipeline( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pRenderInfo->stencilPipelines[ eyeIndex ] );
+						vkCmdBindPipeline( commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pRenderInfo->stencilPipelines[ eyeIndex ] );
 
 						// Bind vismask vertices and indices for the current eye
 						VkDeviceSize offsets[] = { 0 };
 
 						// Bind the index buffer for the current eye stencil
-						vkCmdBindIndexBuffer( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, stencils[ eyeIndex ]->GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT16 );
+						vkCmdBindIndexBuffer( commands, stencils[ eyeIndex ]->GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT16 );
 
 						// Bind the vertex buffer for the current eye stencil
-						vkCmdBindVertexBuffers( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, 0, 1, stencils[ eyeIndex ]->GetVertexBuffer()->GetVkBufferPtr(), offsets );
+						vkCmdBindVertexBuffers( commands, 0, 1, stencils[ eyeIndex ]->GetVertexBuffer()->GetVkBufferPtr(), offsets );
 
 						// Draw the stencil for the current eye
 						vkCmdDrawIndexed(
-							GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer,
+							commands,
 							static_cast< uint32_t >( stencils[ eyeIndex ]->GetIndices()->size() ), // Number of indices to draw
 							1,																	   // Instance count
 							0,																	   // First index
@@ -2029,15 +2028,15 @@ namespace xrlib
 						if ( eyeIndex == 0 )
 						{
 							// Transition to the right eye subpass
-							vkCmdNextSubpass( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, VK_SUBPASS_CONTENTS_INLINE );
+							vkCmdNextSubpass( commands, VK_SUBPASS_CONTENTS_INLINE );
 						}
 					}
 
 					// Transition to the next subpass for main rendering
-					vkCmdNextSubpass( GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer, VK_SUBPASS_CONTENTS_INLINE );
+					vkCmdNextSubpass( commands, VK_SUBPASS_CONTENTS_INLINE );
 				}
 
-				// SubmitDraw waits for GPU reads before the next frame updates instances
+				// This frame's buffers are free to update now that WaitForFrameInFlight has returned
 				const XrTime renderTime = state.frameState.predictedDisplayTime;
 				for ( auto &renderable : pRenderInfo->vecRenderables )
 				{
@@ -2047,7 +2046,7 @@ namespace xrlib
 					for ( uint32_t i = 0; i < renderable->instances.size(); i++ )
 						renderable->UpdateModelMatrix( i, m_pSession->GetAppSpace(), renderTime );
 
-					gpuResult = renderable->UpdateInstancesBuffer();
+					gpuResult = renderable->UpdateFrameBuffers( state.unFrameIndex );
 					if ( gpuResult != VK_SUCCESS )
 						return FailGPU( gpuResult );
 				}
@@ -2055,7 +2054,6 @@ namespace xrlib
 				// Background, opaque, transparent back to front, then post scene in list order
 				std::vector< SMaterialDraw > sections;
 				std::vector< SQueuedDraw > draws;
-				const auto commands = GetMultiviewRenderTargets().at( state.unCurrentSwapchainImage_Color ).vkRenderCommandBuffer;
 				for ( auto *renderable : pRenderInfo->vecRenderables )
 				{
 					if ( !renderable->isVisible )
@@ -2102,7 +2100,7 @@ namespace xrlib
 				}
 
 				// Submit draw calls to gpu
-				gpuResult = SubmitDraw( state.unCurrentSwapchainImage_Color );
+				gpuResult = SubmitDraw();
 				if ( gpuResult != VK_SUCCESS )
 					return FailGPU( gpuResult );
 
@@ -2180,7 +2178,7 @@ namespace xrlib
 		{
 			// Set command buffer to recording
 			VkCommandBufferBeginInfo cmdBeginInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-			VK_CHECK_RETURN( vkBeginCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, &cmdBeginInfo ) );
+			VK_CHECK_RETURN( vkBeginCommandBuffer( GetFrameCommandBuffer(), &cmdBeginInfo ) );
 		}
 
 		if ( renderpass != VK_NULL_HANDLE )
@@ -2195,30 +2193,90 @@ namespace xrlib
 			renderPassBeginInfo.renderArea.extent = GetTextureExtent();
 
 			// Start render pass
-			vkCmdBeginRenderPass( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, &renderPassBeginInfo, subpass );
+			vkCmdBeginRenderPass( GetFrameCommandBuffer(), &renderPassBeginInfo, subpass );
 		}
 		return VK_SUCCESS;
 	}
 
-	VkResult CStereoRender::SubmitDraw( const uint32_t unSwpachainImageIndex, const uint32_t timeoutNs, const VkCommandBufferResetFlags renderBufferResetFlags )
+	VkResult CStereoRender::WaitForFrameInFlight( CRenderInfo *pRenderInfo, const uint64_t timeoutNs )
 	{
+		const uint32_t unCount = pRenderInfo->GetFramesInFlight();
+		if ( m_vecFramesInFlight.size() != unCount )
+		{
+			VK_CHECK_RETURN( CreateFramesInFlight( unCount ) );
+		}
+
+		// Earlier frames in flight can keep rendering while this one is recorded
+		m_unFrameIndex = ( m_unFrameIndex + 1 ) % unCount;
+		pRenderInfo->state.unFrameIndex = m_unFrameIndex;
+
+		auto &frame = m_vecFramesInFlight[ m_unFrameIndex ];
+		VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &frame.vkFence, VK_TRUE, timeoutNs ) );
+		return vkResetCommandBuffer( frame.vkCommandBuffer, 0 );
+	}
+
+	VkResult CStereoRender::SubmitDraw()
+	{
+		auto &frame = m_vecFramesInFlight.at( m_unFrameIndex );
+
 		// End render recording
-		vkCmdEndRenderPass( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer );
-		VK_CHECK_RETURN( vkEndCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer ) );
+		vkCmdEndRenderPass( frame.vkCommandBuffer );
+		VK_CHECK_RETURN( vkEndCommandBuffer( frame.vkCommandBuffer ) );
+
+		// Reset just before submitting so an earlier failure doesn't leave the fence unsignaled
+		VK_CHECK_RETURN( vkResetFences( GetLogicalDevice(), 1, &frame.vkFence ) );
 
 		// Execute render commands (requires exclusive access to vkQueue)
-		// safest after wait swapchain image
+		// OpenXR only needs the work submitted before the swapchain images are released, so there's no CPU wait here
 		VkSubmitInfo submitInfo { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer;
-		VK_CHECK_RETURN( vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Graphics(), 1, &submitInfo, m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence ) );
-
-		// Wait for rendering to finish
-		// @todo move to separate thread - or at start unSwapchainIndex from prior frame
-		VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence, VK_TRUE, timeoutNs ) );
-		VK_CHECK_RETURN( vkResetFences( GetLogicalDevice(), 1, &m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandFence ) );
-		VK_CHECK_RETURN( vkResetCommandBuffer( m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].vkRenderCommandBuffer, renderBufferResetFlags ) );
+		submitInfo.pCommandBuffers = &frame.vkCommandBuffer;
+		VK_CHECK_RETURN( vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Graphics(), 1, &submitInfo, frame.vkFence ) );
 		return VK_SUCCESS;
+	}
+
+	VkResult CStereoRender::CreateFramesInFlight( uint32_t unCount )
+	{
+		DestroyFramesInFlight();
+
+		for ( uint32_t i = 0; i < unCount; ++i )
+		{
+			auto &frame = m_vecFramesInFlight.emplace_back();
+
+			VkCommandBufferAllocateInfo commandBufferAlloc { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+			commandBufferAlloc.commandPool = m_vkRenderCommandPool;
+			commandBufferAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+			commandBufferAlloc.commandBufferCount = 1;
+			VK_CHECK_RETURN( vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &frame.vkCommandBuffer ) );
+
+			// Start signaled so the first wait on each frame returns straight away
+			VkFenceCreateInfo fenceCI { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+			fenceCI.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+			VK_CHECK_RETURN( vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &frame.vkFence ) );
+		}
+
+		m_unFrameIndex = unCount - 1;
+		return VK_SUCCESS;
+	}
+
+	void CStereoRender::DestroyFramesInFlight()
+	{
+		if ( m_vecFramesInFlight.empty() )
+			return;
+
+		const VkDevice device = GetLogicalDevice();
+		vkDeviceWaitIdle( device );
+
+		for ( auto &frame : m_vecFramesInFlight )
+		{
+			if ( frame.vkCommandBuffer )
+				vkFreeCommandBuffers( device, m_vkRenderCommandPool, 1, &frame.vkCommandBuffer );
+
+			if ( frame.vkFence )
+				vkDestroyFence( device, frame.vkFence, nullptr );
+		}
+
+		m_vecFramesInFlight.clear();
 	}
 
 	void CStereoRender::CalculateViewMatrices( std::array< XrMatrix4x4f, 2 > &outViewMatrices, const XrVector3f *eyeScale ) 
