@@ -59,12 +59,7 @@ namespace xrlib
 			return result;
 
 		// todo assert for debug, matrices must be at least 1
-		if ( m_pInstanceBuffer )
-			delete m_pInstanceBuffer;
-
-		m_pInstanceBuffer = new CDeviceBuffer( m_pSession );
-		result = InitBuffer( m_pInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, sizeof( XrMatrix4x4f ) * instanceMatrices.size(), instanceMatrices.data() );
-
+		result = InitInstanceBuffers();
 		if ( result != VK_SUCCESS )
 			return result;
 
@@ -189,17 +184,9 @@ namespace xrlib
 			return result;
 
 		// todo assert for debug, matrices must be at least 1
-		if ( m_pInstanceBuffer )
-			delete m_pInstanceBuffer;
-
-		m_pInstanceBuffer = new CDeviceBuffer( m_pSession );
-		result = InitBuffer( 
-			m_pInstanceBuffer, 
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
-			sizeof( XrMatrix4x4f ) * instanceMatrices.size(), instanceMatrices.data() );
-			
+		result = InitInstanceBuffers();
 		if ( result != VK_SUCCESS )
-				return result;
+			return result;
 
 		// Reset
 		if ( bReset )
@@ -315,8 +302,7 @@ namespace xrlib
 		if ( m_pVertexBuffer )
 			delete m_pVertexBuffer;
 
-		if ( m_pInstanceBuffer )
-			delete m_pInstanceBuffer;
+		m_vecInstanceBuffers.clear();
 	}
 
 	CColoredPrimitive::CColoredPrimitive( 
@@ -363,17 +349,9 @@ namespace xrlib
 			return result;
 
 		// todo assert for debug, matrices must be at least 1
-		if ( m_pInstanceBuffer )
-			delete m_pInstanceBuffer;
-
-		m_pInstanceBuffer = new CDeviceBuffer( m_pSession );
-		result = InitBuffer( 
-			m_pInstanceBuffer, 
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
-			sizeof( XrMatrix4x4f ) * instanceMatrices.size(), instanceMatrices.data() );
-			
+		result = InitInstanceBuffers();
 		if ( result != VK_SUCCESS )
-				return result;
+			return result;
 		
 		// Reset
 		if ( bReset )

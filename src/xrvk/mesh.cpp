@@ -134,6 +134,9 @@ namespace xrlib
 				delete m_pVertexBuffer;
 
 			m_pVertexBuffer = new CDeviceBuffer( m_pSession );
+			m_vecFrameVertexBuffers.clear();
+			m_flgDirtyVertexFrames = 0;
+			m_flgStaticVertexFrames = 0;
 			m_unBufferedVertexCount = 0;
 			VkResult result = InitBuffer( m_pVertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( SMeshVertex ) * vertices.size(), vertices.data() );
 			if ( result != VK_SUCCESS )
@@ -154,14 +157,10 @@ namespace xrlib
 				return result;
 		}
 
-		// Initialize instance buffer
+		// Initialize instance buffers
 		if ( instanceMatrices.size() > 0 )
 		{
-			if ( m_pInstanceBuffer )
-				delete m_pInstanceBuffer;
-
-			m_pInstanceBuffer = new CDeviceBuffer( m_pSession );
-			VkResult result = InitBuffer( m_pInstanceBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, sizeof( XrMatrix4x4f ) * instanceMatrices.size(), instanceMatrices.data() );
+			VkResult result = InitInstanceBuffers();
 			if ( result != VK_SUCCESS )
 				return result;
 		}
@@ -177,7 +176,7 @@ namespace xrlib
 
 	VkResult CRenderModel::InitSkinning( VkDescriptorSetLayout layout, const XrMatrix4x4f &modelFromAsset )
 	{
-		if ( !pAnimation || !layout || m_pSkinningBuffer || m_vkSkinningPool )
+		if ( !pAnimation || !layout || !m_vecSkinningBuffers.empty() || m_vkSkinningPool )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
 		m_modelFromAsset = modelFromAsset;
@@ -197,11 +196,6 @@ namespace xrlib
 		if ( std::max( { size, vertexSize, deltaSize, weightSize } ) > properties.limits.maxStorageBufferRange || properties.limits.maxPerStageDescriptorStorageBuffers < 4 || properties.limits.maxDescriptorSetStorageBuffers < 4 )
 			return VK_ERROR_FEATURE_NOT_PRESENT;
 
-		m_pSkinningBuffer = std::make_unique< CDeviceBuffer >( m_pSession );
-		VK_CHECK_RETURN( m_pSkinningBuffer->Init( VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, size ) );
-		VK_CHECK_RETURN( m_pSkinningBuffer->MapMemory() );
-		std::memcpy( m_pSkinningBuffer->GetMappedData(), &modelFromAsset, sizeof( modelFromAsset ) );
-
 		auto InitMorphBuffer = [ & ]( std::unique_ptr< CDeviceBuffer > &buffer, VkDeviceSize bytes )
 		{
 			buffer = std::make_unique< CDeviceBuffer >( m_pSession );
@@ -212,7 +206,17 @@ namespace xrlib
 		};
 		VK_CHECK_RETURN( InitMorphBuffer( m_pMorphVertexBuffer, vertexSize ) );
 		VK_CHECK_RETURN( InitMorphBuffer( m_pMorphDeltaBuffer, deltaSize ) );
-		VK_CHECK_RETURN( InitMorphBuffer( m_pMorphWeightBuffer, weightSize ) );
+
+		// The model-from-asset header stays fixed, the pose and weights change each frame
+		for ( uint32_t i = 0; i < m_unFramesInFlight; ++i )
+		{
+			auto &skinning = m_vecSkinningBuffers.emplace_back( std::make_unique< CDeviceBuffer >( m_pSession ) );
+			VK_CHECK_RETURN( skinning->Init( VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, size ) );
+			VK_CHECK_RETURN( skinning->MapMemory() );
+			std::memcpy( skinning->GetMappedData(), &modelFromAsset, sizeof( modelFromAsset ) );
+
+			VK_CHECK_RETURN( InitMorphBuffer( m_vecMorphWeightBuffers.emplace_back(), weightSize ) );
+		}
 
 		// The header lets models without morphs bind small, valid dummy buffers
 		const SMorphVertex header { static_cast< uint32_t >( morphVertices.size() ), 0, 0, 0 };
@@ -226,39 +230,45 @@ namespace xrlib
 		m_unMorphWeightCount = morphWeights.size();
 		VK_CHECK_RETURN( UpdateSkinning() );
 
-		VkDescriptorPoolSize poolSize { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 };
+		VkDescriptorPoolSize poolSize { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * m_unFramesInFlight };
 		VkDescriptorPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-		poolInfo.maxSets = 1;
+		poolInfo.maxSets = m_unFramesInFlight;
 		poolInfo.poolSizeCount = 1;
 		poolInfo.pPoolSizes = &poolSize;
 		VK_CHECK_RETURN( vkCreateDescriptorPool( device, &poolInfo, nullptr, &m_vkSkinningPool ) );
 
+		const std::vector< VkDescriptorSetLayout > layouts( m_unFramesInFlight, layout );
 		VkDescriptorSetAllocateInfo allocation { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
 		allocation.descriptorPool = m_vkSkinningPool;
-		allocation.descriptorSetCount = 1;
-		allocation.pSetLayouts = &layout;
-		VK_CHECK_RETURN( vkAllocateDescriptorSets( device, &allocation, &m_vkSkinningSet ) );
+		allocation.descriptorSetCount = m_unFramesInFlight;
+		allocation.pSetLayouts = layouts.data();
+		m_vecSkinningSets.assign( m_unFramesInFlight, VK_NULL_HANDLE );
+		VK_CHECK_RETURN( vkAllocateDescriptorSets( device, &allocation, m_vecSkinningSets.data() ) );
 
-		const std::vector< VkDescriptorBufferInfo > buffers {
-			{ m_pSkinningBuffer->GetVkBuffer(), 0, size }, { m_pMorphVertexBuffer->GetVkBuffer(), 0, vertexSize }, { m_pMorphDeltaBuffer->GetVkBuffer(), 0, deltaSize }, { m_pMorphWeightBuffer->GetVkBuffer(), 0, weightSize } };
-		std::vector< VkWriteDescriptorSet > descriptors( buffers.size(), { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } );
-		for ( uint32_t i = 0; i < descriptors.size(); ++i )
+		for ( uint32_t frame = 0; frame < m_unFramesInFlight; ++frame )
 		{
-			auto &descriptor = descriptors[ i ];
-			descriptor.dstSet = m_vkSkinningSet;
-			descriptor.dstBinding = i;
-			descriptor.descriptorCount = 1;
-			descriptor.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			descriptor.pBufferInfo = &buffers[ i ];
+			const std::vector< VkDescriptorBufferInfo > buffers {
+				{ m_vecSkinningBuffers[ frame ]->GetVkBuffer(), 0, size }, { m_pMorphVertexBuffer->GetVkBuffer(), 0, vertexSize }, { m_pMorphDeltaBuffer->GetVkBuffer(), 0, deltaSize }, { m_vecMorphWeightBuffers[ frame ]->GetVkBuffer(), 0, weightSize } };
+			std::vector< VkWriteDescriptorSet > descriptors( buffers.size(), { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } );
+			for ( uint32_t i = 0; i < descriptors.size(); ++i )
+			{
+				auto &descriptor = descriptors[ i ];
+				descriptor.dstSet = m_vecSkinningSets[ frame ];
+				descriptor.dstBinding = i;
+				descriptor.descriptorCount = 1;
+				descriptor.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+				descriptor.pBufferInfo = &buffers[ i ];
+			}
+
+			vkUpdateDescriptorSets( device, static_cast< uint32_t >( descriptors.size() ), descriptors.data(), 0, nullptr );
 		}
 
-		vkUpdateDescriptorSets( device, static_cast< uint32_t >( descriptors.size() ), descriptors.data(), 0, nullptr );
 		return VK_SUCCESS;
 	}
 
 	VkResult CRenderModel::UpdateSkinning()
 	{
-		if ( !pAnimation || !m_pSkinningBuffer || !m_pMorphWeightBuffer )
+		if ( !pAnimation || m_vecSkinningBuffers.empty() || m_vecMorphWeightBuffers.empty() )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
 		const auto count = m_vecSkinningMatrices.size();
@@ -266,28 +276,85 @@ namespace xrlib
 		if ( m_vecSkinningMatrices.size() != count || pAnimation->GetMorphWeights().size() != m_unMorphWeightCount )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
-		auto *pData = static_cast< uint8_t * >( m_pSkinningBuffer->GetMappedData() );
-		if ( !pData || !m_pMorphWeightBuffer->GetMappedData() )
-			return VK_ERROR_MEMORY_MAP_FAILED;
-
-		if ( m_unMorphWeightCount )
-			std::memcpy( m_pMorphWeightBuffer->GetMappedData(), pAnimation->GetMorphWeights().data(), m_unMorphWeightCount * sizeof( float ) );
-
-		std::memcpy( pData + sizeof( XrMatrix4x4f ), m_vecSkinningMatrices.data(), count * sizeof( XrMatrix4x4f ) );
+		m_vecMorphWeights = pAnimation->GetMorphWeights();
+		m_flgDirtySkinningFrames = ( 1u << m_unFramesInFlight ) - 1;
 		return VK_SUCCESS;
 	}
 
 	VkResult CRenderModel::UpdateVertexBuffer()
 	{
-		if ( !m_pVertexBuffer || vertices.size() != m_unBufferedVertexCount )
+		if ( ( !m_pVertexBuffer && m_vecFrameVertexBuffers.empty() ) || vertices.size() != m_unBufferedVertexCount )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
-		const VkResult result = m_pVertexBuffer->MapMemory();
-		if ( result != VK_SUCCESS )
-			return result;
+		// Frames in flight may still read the static buffer, so dynamic models get their own set
+		if ( m_vecFrameVertexBuffers.empty() )
+		{
+			m_flgStaticVertexFrames = ( 1u << m_unFramesInFlight ) - 1;
 
-		memcpy( m_pVertexBuffer->GetMappedData(), vertices.data(), sizeof( SMeshVertex ) * vertices.size() );
+			for ( uint32_t i = 0; i < m_unFramesInFlight; ++i )
+			{
+				auto &buffer = m_vecFrameVertexBuffers.emplace_back( std::make_unique< CDeviceBuffer >( m_pSession ) );
+				VK_CHECK_RETURN( buffer->Init( VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof( SMeshVertex ) * vertices.size(), vertices.data(), false ) );
+			}
+		}
+		else
+			m_flgDirtyVertexFrames = ( 1u << m_unFramesInFlight ) - 1;
+
 		UpdateSectionBounds();
+		return VK_SUCCESS;
+	}
+
+	CDeviceBuffer *CRenderModel::GetFrameVertexBuffer()
+	{
+		return m_vecFrameVertexBuffers.empty() ? GetVertexBuffer() : m_vecFrameVertexBuffers[ m_unFrameIndex ].get();
+	}
+
+	VkResult CRenderModel::UpdateFrameBuffers( uint32_t unFrameIndex )
+	{
+		VK_CHECK_RETURN( CRenderable::UpdateFrameBuffers( unFrameIndex ) );
+
+		const uint32_t frameBit = 1u << unFrameIndex;
+		if ( m_flgDirtyVertexFrames & frameBit )
+		{
+			auto *pBuffer = m_vecFrameVertexBuffers[ unFrameIndex ].get();
+			VK_CHECK_RETURN( pBuffer->MapMemory() );
+			std::memcpy( pBuffer->GetMappedData(), vertices.data(), sizeof( SMeshVertex ) * vertices.size() );
+			m_flgDirtyVertexFrames &= ~frameBit;
+		}
+
+		// This frame's earlier GPU work is done, free the static buffer once no frame can still read it
+		if ( m_flgStaticVertexFrames & frameBit )
+		{
+			m_flgStaticVertexFrames &= ~frameBit;
+			if ( !m_flgStaticVertexFrames )
+			{
+				delete m_pVertexBuffer;
+				m_pVertexBuffer = nullptr;
+			}
+		}
+
+		if ( m_flgDirtySkinningFrames & frameBit )
+		{
+			auto *pSkinning = static_cast< uint8_t * >( m_vecSkinningBuffers[ unFrameIndex ]->GetMappedData() );
+			auto *pWeights = m_vecMorphWeightBuffers[ unFrameIndex ]->GetMappedData();
+			if ( !pSkinning || !pWeights )
+				return VK_ERROR_MEMORY_MAP_FAILED;
+
+			std::memcpy( pSkinning + sizeof( XrMatrix4x4f ), m_vecSkinningMatrices.data(), m_vecSkinningMatrices.size() * sizeof( XrMatrix4x4f ) );
+			if ( m_unMorphWeightCount )
+				std::memcpy( pWeights, m_vecMorphWeights.data(), m_unMorphWeightCount * sizeof( float ) );
+
+			m_flgDirtySkinningFrames &= ~frameBit;
+		}
+
+		// Material pointers from LoadMaterial can change at any time, so refresh every rendered frame
+		if ( m_unLoadedMaterialCount && pFragmentDescriptorsBuffer && pFragmentDescriptorsBuffer->GetMappedData() )
+		{
+			auto *mapped = static_cast< uint8_t * >( pFragmentDescriptorsBuffer->GetMappedData() ) + m_unMaterialStride * m_unLoadedMaterialCount * unFrameIndex;
+			for ( size_t i = 0; i < m_unLoadedMaterialCount; ++i )
+				std::memcpy( mapped + m_unMaterialStride * i, static_cast< const SMaterialUBO * >( &materials[ i ] ), sizeof( SMaterialUBO ) );
+		}
+
 		return VK_SUCCESS;
 	}
 
@@ -309,7 +376,7 @@ namespace xrlib
 				const auto &position = vertex.position;
 				bounds.lower = { std::min( bounds.lower.x, position.x ), std::min( bounds.lower.y, position.y ), std::min( bounds.lower.z, position.z ) };
 				bounds.upper = { std::max( bounds.upper.x, position.x ), std::max( bounds.upper.y, position.y ), std::max( bounds.upper.z, position.z ) };
-				if ( !m_pSkinningBuffer )
+				if ( m_vecSkinningBuffers.empty() )
 					continue;
 
 				for ( uint32_t joint = 0; joint < JOINT_INFLUENCE_COUNT; ++joint )
@@ -451,7 +518,7 @@ namespace xrlib
 
 		// Bind shape's index and vertex buffers
 		vkCmdBindIndexBuffer( commandBuffer, GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT32 );
-		vkCmdBindVertexBuffers( commandBuffer, 0, 1, GetVertexBuffer()->GetVkBufferPtr(), vertexOffsets );
+		vkCmdBindVertexBuffers( commandBuffer, 0, 1, GetFrameVertexBuffer()->GetVkBufferPtr(), vertexOffsets );
 		vkCmdBindVertexBuffers( commandBuffer, 1, 1, GetInstanceBuffer()->GetVkBufferPtr(), instanceOffsets );
 
 		// Bind vertex descriptors
@@ -467,19 +534,20 @@ namespace xrlib
 				0, nullptr ); // dynamic offsets not supported
 		}
 
-		if ( m_vkSkinningSet )
-			vkCmdBindDescriptorSets( commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderInfo.vecPipelineLayouts[ pipelineLayoutIndex ], 2, 1, &m_vkSkinningSet, 0, nullptr );
+		if ( !m_vecSkinningSets.empty() )
+			vkCmdBindDescriptorSets( commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderInfo.vecPipelineLayouts[ pipelineLayoutIndex ], 2, 1, &m_vecSkinningSets[ m_unFrameIndex ], 0, nullptr );
 
 		// Bind environment lighting
 		if ( renderInfo.pSceneLighting )
 		{
+			const VkDescriptorSet lighting = renderInfo.GetSceneLightingDescriptor();
 			vkCmdBindDescriptorSets(
 				commandBuffer,
 				VK_PIPELINE_BIND_POINT_GRAPHICS,
 				renderInfo.vecPipelineLayouts[ pipelineLayoutIndex ],
 				1, // set 1 in pbr fragment shader
 				1, // one set
-				&renderInfo.sceneLightingDescriptor,
+				&lighting,
 				0, // no dynamic offset needed
 				nullptr );
 		}
@@ -504,13 +572,15 @@ namespace xrlib
 					continue;
 				}
 
+				// One material set per frame in flight
+				const auto &descriptors = materials[ section.materialIndex ].descriptors;
 				vkCmdBindDescriptorSets(
 					commandBuffer,
 					VK_PIPELINE_BIND_POINT_GRAPHICS,
 					renderInfo.vecPipelineLayouts[ pipelineLayoutIndex ],
 					0, // Set 0 in fragment shader
-					materials[ section.materialIndex ].descriptors.size(),
-					materials[ section.materialIndex ].descriptors.data(),
+					1,
+					&descriptors[ m_unFrameIndex % descriptors.size() ],
 					0,
 					nullptr ); // dynamic offsets not supported
 
@@ -523,10 +593,7 @@ namespace xrlib
 	uint32_t CRenderModel::LoadMaterial( CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager )
 	{
 		std::vector< SMaterialUBO * > materialData;
-		const auto count = LoadMaterial( materialData, pRenderInfo, layoutId, poolId, pTextureManager );
-		if ( pFragmentDescriptorsBuffer )
-			pFragmentDescriptorsBuffer->UnmapMemory();
-		return count;
+		return LoadMaterial( materialData, pRenderInfo, layoutId, poolId, pTextureManager );
 	}
 
 	uint32_t CRenderModel::LoadMaterial( std::vector< SMaterialUBO * > &outMaterialData, CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager )
@@ -538,9 +605,11 @@ namespace xrlib
 		vkGetPhysicalDeviceProperties( m_pSession->GetVulkan()->GetVkPhysicalDevice(), &properties );
 		const VkDeviceSize alignment = ( std::max )( VkDeviceSize( 1 ), properties.limits.minUniformBufferOffsetAlignment );
 		const VkDeviceSize stride = ( sizeof( SMaterialUBO ) + alignment - 1 ) / alignment * alignment;
+		const VkDeviceSize frameSize = stride * materials.size();
+		m_unLoadedMaterialCount = 0;
 		delete pFragmentDescriptorsBuffer;
 		pFragmentDescriptorsBuffer = pRenderInfo->pDescriptors->CreateBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stride * materials.size() );
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, frameSize * m_unFramesInFlight );
 		if ( !pFragmentDescriptorsBuffer || pFragmentDescriptorsBuffer->MapMemory() != VK_SUCCESS )
 			return 0;
 
@@ -549,7 +618,7 @@ namespace xrlib
 		for ( size_t i = 0; i < materials.size(); ++i )
 		{
 			auto &material = materials[ i ];
-			if ( pRenderInfo->pDescriptors->CreateDescriptorSets( material.descriptors, layoutId, poolId, 1 ) != VK_SUCCESS )
+			if ( pRenderInfo->pDescriptors->CreateDescriptorSets( material.descriptors, layoutId, poolId, m_unFramesInFlight ) != VK_SUCCESS )
 				return 0;
 			const int maps[] = { material.baseColorTexture, material.metallicRoughnessTexture, material.normalTexture, material.emissiveTexture, material.occlusionTexture };
 			material.setTextureFlag( TEXTURE_BASE_COLOR_SRGB_BIT, false );
@@ -575,12 +644,22 @@ namespace xrlib
 			}
 			material.resetPadding();
 			material.updateTextureFlags();
-			auto *data = reinterpret_cast< SMaterialUBO * >( mapped + stride * i );
-			std::memcpy( data, &material, sizeof( SMaterialUBO ) );
-			outMaterialData.push_back( data );
+			outMaterialData.push_back( &material );
 			material.descriptorsBufferIndex = static_cast< uint32_t >( i );
-			pRenderInfo->pDescriptors->UpdateUniformBuffer( material.descriptors, 0, pFragmentDescriptorsBuffer->GetVkBuffer(), VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, stride * i, sizeof( SMaterialUBO ) );
+
+			// Each frame's set reads that frame's copy of the material
+			for ( uint32_t frame = 0; frame < m_unFramesInFlight; ++frame )
+			{
+				const VkDeviceSize offset = frameSize * frame + stride * i;
+				std::memcpy( mapped + offset, static_cast< const SMaterialUBO * >( &material ), sizeof( SMaterialUBO ) );
+
+				std::vector< VkDescriptorSet > descriptors = { material.descriptors[ frame ] };
+				pRenderInfo->pDescriptors->UpdateUniformBuffer( descriptors, 0, pFragmentDescriptorsBuffer->GetVkBuffer(), VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, offset, sizeof( SMaterialUBO ) );
+			}
 		}
+
+		m_unMaterialStride = stride;
+		m_unLoadedMaterialCount = materials.size();
 		return static_cast< uint32_t >( materials.size() );
 	}
 
@@ -609,11 +688,8 @@ namespace xrlib
 			m_pVertexBuffer = nullptr;
 		}
 
-		if ( m_pInstanceBuffer )
-		{
-			delete m_pInstanceBuffer;
-			m_pInstanceBuffer = nullptr;
-		}
+		m_vecFrameVertexBuffers.clear();
+		m_vecInstanceBuffers.clear();
 	}
 
 } // namespace xrlib

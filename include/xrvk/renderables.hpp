@@ -20,6 +20,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -142,8 +143,12 @@ namespace xrlib
 			VkMemoryPropertyFlags memPropFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			VkAllocationCallbacks *pCallbacks = nullptr );
 
-		// Requires host-visible memory and completed GPU reads
+		// Copies instanceMatrices into the instance buffer of the frame being recorded
 		VkResult UpdateInstancesBuffer();
+
+		// Selects the frame in flight being recorded and copies CPU-side data into its buffers
+		// EndRenderFrame calls this for visible renderables once that frame's earlier GPU reads have completed
+		virtual VkResult UpdateFrameBuffers( uint32_t unFrameIndex );
 		
 		void ResetScale( float x, float y, float z, uint32_t unInstanceIndex = 0 );
 		void ResetScale( float fScale, uint32_t unInstanceIndex = 0 );
@@ -159,7 +164,7 @@ namespace xrlib
 		[[nodiscard]] uint32_t GetInstanceCount() const { return (uint32_t) instances.size(); }
 		CDeviceBuffer *GetIndexBuffer() { return m_pIndexBuffer; }
 		CDeviceBuffer *GetVertexBuffer() { return m_pVertexBuffer; }
-		CDeviceBuffer *GetInstanceBuffer() { return m_pInstanceBuffer; }
+		CDeviceBuffer *GetInstanceBuffer() { return m_vecInstanceBuffers.empty() ? nullptr : m_vecInstanceBuffers[ m_unFrameIndex ].get(); }
 
 		XrMatrix4x4f *GetModelMatrix( uint32_t unInstanceIndex = 0, bool bRefresh = false );
 		XrMatrix4x4f *GetUpdatedModelMatrix( uint32_t unInstanceIndex = 0 ) { return GetModelMatrix( unInstanceIndex, true ); }
@@ -168,18 +173,32 @@ namespace xrlib
 		CSession *m_pSession = nullptr;
 		CDeviceBuffer *m_pIndexBuffer = nullptr;
 		CDeviceBuffer *m_pVertexBuffer = nullptr;
-		CDeviceBuffer *m_pInstanceBuffer = nullptr;
+
+		// One instance buffer per frame in flight
+		std::vector< std::unique_ptr< CDeviceBuffer > > m_vecInstanceBuffers;
+		uint32_t m_unFramesInFlight = 1;
+		uint32_t m_unFrameIndex = 0;
+
+		// Earlier GPU reads of the current instance buffers must have completed
+		VkResult InitInstanceBuffers();
 
 		// Interfaces
 		virtual void DeleteBuffers() = 0;
+
+	  private:
+		VkResult CreateInstanceBuffers( std::vector< std::unique_ptr< CDeviceBuffer > > &outBuffers, std::vector< XrMatrix4x4f > &matrices );
 	};
 
 	class CRenderInfo
 	{
 	  public:
 
-		explicit CRenderInfo( CSession* pSession );
+		// Frames in flight let the CPU record a frame while the GPU renders earlier ones
+		explicit CRenderInfo( CSession* pSession, uint32_t unFramesInFlight = 2 );
 		~CRenderInfo();
+
+		static constexpr uint32_t k_unMaxFramesInFlight = 8;
+		uint32_t GetFramesInFlight() const { return m_unFramesInFlight; }
 
 		// For renderables
 		std::vector< VkPipelineLayout > vecPipelineLayouts;
@@ -197,14 +216,16 @@ namespace xrlib
 		VkPipelineLayout stencilLayout = VK_NULL_HANDLE;
 		std::vector< VkPipeline > stencilPipelines;
 
-		// For global scene lighting
+		// For global scene lighting, pSceneLighting is CPU-side and copied to each frame's buffer
 		uint32_t lightingPoolId = 0;
 		uint32_t lightingLayoutId = 0;
-		CDeviceBuffer *pSceneLightingBuffer = nullptr;
 		SSceneLighting *pSceneLighting = nullptr;
-		VkDescriptorSet sceneLightingDescriptor = VK_NULL_HANDLE;
+		std::vector< std::unique_ptr< CDeviceBuffer > > vecSceneLightingBuffers;
+		std::vector< VkDescriptorSet > vecSceneLightingDescriptors;
 
 		void SetupSceneLighting();
+		VkResult UpdateSceneLighting();
+		VkDescriptorSet GetSceneLightingDescriptor() const { return vecSceneLightingDescriptors[ state.unFrameIndex ]; }
 
 		// Earlier GPU reads must have completed before changing environment descriptors
 		// Shared ownership keeps images alive, nullptr disables IBL without changing direct/ambient light
@@ -223,6 +244,7 @@ namespace xrlib
 
 			uint32_t unCurrentSwapchainImage_Color = 0;
 			uint32_t unCurrentSwapchainImage_Depth = 0;
+			uint32_t unFrameIndex = 0; // Frame in flight being recorded
 
 			XrFrameState frameState { XR_TYPE_FRAME_STATE };
 			XrViewState sharedEyeState { XR_TYPE_VIEW_STATE };
@@ -280,6 +302,8 @@ namespace xrlib
 	  private:
 		VkDevice m_device = VK_NULL_HANDLE;
 		CSession *m_pSession = nullptr;
+		uint32_t m_unFramesInFlight = 2;
+		SSceneLighting m_sceneLighting {};
 		std::shared_ptr< CEnvironmentLighting > m_pDefaultEnvironment;
 		std::shared_ptr< CEnvironmentLighting > m_pEnvironment;
 	};
