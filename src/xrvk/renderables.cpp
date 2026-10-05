@@ -27,22 +27,21 @@ namespace xrlib
 		XrSpace xrSpace )
 		: 
 			m_pSession( pSession ),
+			m_pRenderInfo( pRenderInfo ),
 			pipelineLayoutIndex( pipelineLayoutIdx ), 
 			graphicsPipelineIndex( graphicsPipelineIdx ), 
 			descriptorLayoutIndex( descriptorLayoutIdx ),
 			isVisible( bIsVisible )
 	{
 		assert( pSession );
+		if ( !pRenderInfo )
+			throw std::invalid_argument( "Renderables need a CRenderInfo" );
+
+		m_unFramesInFlight = pRenderInfo->GetFramesInFlight();
 
 		// Fill descriptors (if any)
 		if ( descriptorLayoutIdx < ( std::numeric_limits< uint32_t >::max )() )
-		{
-			assert( pRenderInfo );
 			vertexDescriptors = pRenderInfo->pDescriptors->GetDescriptorSets( descriptorLayoutIdx );
-		}
-
-		if ( pRenderInfo )
-			m_unFramesInFlight = pRenderInfo->GetFramesInFlight();
 
 		// Pre-fill first instance
 		instances.push_back( SInstanceState { xrSpace, xrScale } );
@@ -74,11 +73,13 @@ namespace xrlib
 			newMatrices.push_back( matrix );
 		}
 
-		std::vector< std::unique_ptr< CDeviceBuffer > > newBuffers;
-		if ( CreateInstanceBuffers( newBuffers, newMatrices ) != VK_SUCCESS )
+		std::unique_ptr< CDeviceBuffer > newBuffer;
+		if ( CreateInstanceBuffer( newBuffer, newMatrices ) != VK_SUCCESS )
 			throw std::runtime_error( "Failed to grow instance buffer" );
 
-		m_vecInstanceBuffers.swap( newBuffers );
+		RetireBuffer( m_pInstanceBuffer );
+		m_pInstanceBuffer = std::move( newBuffer );
+		m_unInstanceFrameSize = sizeof( XrMatrix4x4f ) * newMatrices.size();
 		instances.swap( newInstances );
 		instanceMatrices.swap( newMatrices );
 
@@ -97,25 +98,41 @@ namespace xrlib
 		return pBuffer->Init( usageFlags, memPropFlags, unSize, pData, true, pCallbacks );
 	}
 
+	void CRenderable::RetireBuffer( CDeviceBuffer *&pBuffer )
+	{
+		if ( !pBuffer )
+			return;
+
+		m_pRenderInfo->RetireBuffer( std::unique_ptr< CDeviceBuffer >( pBuffer ) );
+		pBuffer = nullptr;
+	}
+
+	void CRenderable::RetireBuffer( std::unique_ptr< CDeviceBuffer > &pBuffer )
+	{
+		if ( pBuffer )
+			m_pRenderInfo->RetireBuffer( std::move( pBuffer ) );
+	}
+
 	VkResult CRenderable::InitInstanceBuffers()
 	{
-		m_vecInstanceBuffers.clear();
+		const VkDeviceSize frameSize = sizeof( XrMatrix4x4f ) * instanceMatrices.size();
+		if ( m_pInstanceBuffer && m_unInstanceFrameSize == frameSize )
+			return VK_SUCCESS;
+
+		RetireBuffer( m_pInstanceBuffer );
+		m_unInstanceFrameSize = 0;
 		if ( instanceMatrices.empty() )
 			return VK_SUCCESS;
 
-		return CreateInstanceBuffers( m_vecInstanceBuffers, instanceMatrices );
+		VK_CHECK_RETURN( CreateInstanceBuffer( m_pInstanceBuffer, instanceMatrices ) );
+		m_unInstanceFrameSize = frameSize;
+		return VK_SUCCESS;
 	}
 
-	VkResult CRenderable::CreateInstanceBuffers( std::vector< std::unique_ptr< CDeviceBuffer > > &outBuffers, std::vector< XrMatrix4x4f > &matrices )
+	VkResult CRenderable::CreateInstanceBuffer( std::unique_ptr< CDeviceBuffer > &outBuffer, const std::vector< XrMatrix4x4f > &matrices )
 	{
-		outBuffers.clear();
-		for ( uint32_t i = 0; i < m_unFramesInFlight; ++i )
-		{
-			auto &buffer = outBuffers.emplace_back( std::make_unique< CDeviceBuffer >( m_pSession ) );
-			VK_CHECK_RETURN( InitBuffer( buffer.get(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, sizeof( XrMatrix4x4f ) * matrices.size(), matrices.data() ) );
-		}
-
-		return VK_SUCCESS;
+		const VkDeviceSize frameSize = sizeof( XrMatrix4x4f ) * matrices.size();
+		return m_pRenderInfo->CreateFrameBuffer( outBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, frameSize, matrices.data(), frameSize );
 	}
 
 	VkResult CRenderable::UpdateInstancesBuffer()
@@ -123,20 +140,18 @@ namespace xrlib
 		if ( instanceMatrices.empty() )
 			return VK_SUCCESS;
 
-		auto *pBuffer = GetInstanceBuffer();
-		const VkDeviceSize size = instanceMatrices.size() * sizeof( XrMatrix4x4f );
-		if ( !pBuffer || size > pBuffer->GetBufferSize() )
+		const VkDeviceSize size = sizeof( XrMatrix4x4f ) * instanceMatrices.size();
+		if ( !m_pInstanceBuffer || size > m_unInstanceFrameSize )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
-		const VkResult result = pBuffer->MapMemory();
-		if ( result != VK_SUCCESS )
-			return result;
-
-		memcpy( pBuffer->GetMappedData(), instanceMatrices.data(), size );
-		if ( !( pBuffer->GetMemoryPropertyFlags() & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ) )
-			return pBuffer->FlushMemory();
-
+		std::memcpy( static_cast< uint8_t * >( m_pInstanceBuffer->GetMappedData() ) + GetInstanceBufferOffset(), instanceMatrices.data(), size );
 		return VK_SUCCESS;
+	}
+
+	void CRenderable::BindInstanceBuffer( VkCommandBuffer commandBuffer )
+	{
+		const VkDeviceSize offset = GetInstanceBufferOffset();
+		vkCmdBindVertexBuffers( commandBuffer, 1, 1, m_pInstanceBuffer->GetVkBufferPtr(), &offset );
 	}
 
 	VkResult CRenderable::UpdateFrameBuffers( uint32_t unFrameIndex )
@@ -207,22 +222,28 @@ namespace xrlib
 		m_device = pSession->GetVulkan()->GetVkLogicalDevice();
 		m_unFramesInFlight = unFramesInFlight;
 		pDescriptors = new CDescriptorManager( pSession );
+
+		VkPhysicalDeviceProperties properties;
+		vkGetPhysicalDeviceProperties( pSession->GetVulkan()->GetVkPhysicalDevice(), &properties );
+		m_unUniformOffsetAlignment = ( std::max )( VkDeviceSize( 1 ), properties.limits.minUniformBufferOffsetAlignment );
+		m_unStorageOffsetAlignment = ( std::max )( VkDeviceSize( 1 ), properties.limits.minStorageBufferOffsetAlignment );
 	}
 
 	CRenderInfo::~CRenderInfo() 
 	{
 		vkDeviceWaitIdle( m_device );
 
-		vecSceneLightingBuffers.clear();
-
-		if ( pDescriptors )
-			delete pDescriptors;
-
 		for ( auto &renderable : vecRenderables )
 		{
 			if ( renderable )
 				delete renderable;
 		}
+
+		m_vecRetiredBuffers.clear();
+		pSceneLightingBuffer.reset();
+
+		if ( pDescriptors )
+			delete pDescriptors;
 
 		for ( auto &pipeline : vecGraphicsPipelines )
 		{
@@ -255,6 +276,71 @@ namespace xrlib
 		return vecRenderables.size() - 1;
 	}
 
+	VkResult CRenderInfo::CreateFrameBuffer( std::unique_ptr< CDeviceBuffer > &outBuffer, VkBufferUsageFlags usageFlags, VkDeviceSize unStride, const void *pData, VkDeviceSize unSize )
+	{
+		if ( unStride == 0 || unSize > unStride )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		outBuffer = std::make_unique< CDeviceBuffer >( m_pSession );
+		VK_CHECK_RETURN( outBuffer->Init( usageFlags, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, unStride * m_unFramesInFlight ) );
+		VK_CHECK_RETURN( outBuffer->MapMemory() );
+
+		auto *mapped = static_cast< uint8_t * >( outBuffer->GetMappedData() );
+		std::memset( mapped, 0, static_cast< size_t >( unStride * m_unFramesInFlight ) );
+		if ( pData && unSize )
+		{
+			for ( uint32_t i = 0; i < m_unFramesInFlight; ++i )
+				std::memcpy( mapped + unStride * i, pData, static_cast< size_t >( unSize ) );
+		}
+
+		return VK_SUCCESS;
+	}
+
+	void CRenderInfo::RetireBuffer( std::unique_ptr< CDeviceBuffer > pBuffer )
+	{
+		if ( pBuffer )
+			m_vecRetiredBuffers.push_back( { ( 1u << m_unFramesInFlight ) - 1, std::move( pBuffer ) } );
+	}
+
+	VkResult CRenderInfo::UpdateFrameBuffers( uint32_t unFrameIndex )
+	{
+		if ( unFrameIndex >= m_unFramesInFlight )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		state.unFrameIndex = unFrameIndex;
+		const uint32_t frameBit = 1u << unFrameIndex;
+
+		// This frame's earlier work is done, so buffers retired before it are free once every frame has passed
+		for ( auto &retired : m_vecRetiredBuffers )
+			retired.flgFrames &= ~frameBit;
+		std::erase_if( m_vecRetiredBuffers, []( const SRetiredBuffer &retired ) { return retired.flgFrames == 0; } );
+
+		if ( !pSceneLighting )
+			return VK_SUCCESS;
+
+		if ( m_flgDirtyEnvironmentFrames & frameBit )
+		{
+			const auto &images = m_pEnvironment->GetDescriptors();
+			std::vector< VkWriteDescriptorSet > writes( images.size(), VkWriteDescriptorSet { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } );
+			for ( uint32_t i = 0; i < images.size(); ++i )
+			{
+				writes[ i ].dstSet = vecSceneLightingDescriptors[ unFrameIndex ];
+				writes[ i ].dstBinding = i + 1;
+				writes[ i ].descriptorCount = 1;
+				writes[ i ].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				writes[ i ].pImageInfo = &images[ i ];
+			}
+			vkUpdateDescriptorSets( m_device, uint32_t( writes.size() ), writes.data(), 0, nullptr );
+
+			m_flgDirtyEnvironmentFrames &= ~frameBit;
+			if ( !m_flgDirtyEnvironmentFrames )
+				m_vecRetiredEnvironments.clear();
+		}
+
+		std::memcpy( static_cast< uint8_t * >( pSceneLightingBuffer->GetMappedData() ) + m_unSceneLightingStride * unFrameIndex, pSceneLighting, sizeof( SSceneLighting ) );
+		return VK_SUCCESS;
+	}
+
 	VkResult CRenderInfo::SetEnvironment( std::shared_ptr< CEnvironmentLighting > environment, float intensity, float rotation )
 	{
 		if ( !pSceneLighting || vecSceneLightingDescriptors.empty() || !std::isfinite( intensity ) || intensity < 0.f || !std::isfinite( rotation ) )
@@ -263,25 +349,17 @@ namespace xrlib
 		if ( !selected || !selected->IsReady() || selected->GetDevice() != m_device )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
-		const auto &images = selected->GetDescriptors();
-		std::vector< VkWriteDescriptorSet > writes;
-		for ( const auto descriptor : vecSceneLightingDescriptors )
-		{
-			for ( uint32_t i = 0; i < images.size(); ++i )
-			{
-				auto &write = writes.emplace_back( VkWriteDescriptorSet { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } );
-				write.dstSet = descriptor;
-				write.dstBinding = i + 1;
-				write.descriptorCount = 1;
-				write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-				write.pImageInfo = &images[ i ];
-			}
-		}
-		vkUpdateDescriptorSets( m_device, uint32_t( writes.size() ), writes.data(), 0, nullptr );
 		pSceneLighting->environmentIntensity = environment ? intensity : 0.f;
 		pSceneLighting->environmentRotation = rotation;
 		pSceneLighting->environmentMaxLod = selected->GetMaxLod();
+		if ( selected == m_pEnvironment )
+			return VK_SUCCESS;
+
+		// Frames in flight may still sample the current images, so each frame rebinds in UpdateFrameBuffers
+		if ( m_pEnvironment )
+			m_vecRetiredEnvironments.push_back( std::move( m_pEnvironment ) );
 		m_pEnvironment = std::move( selected );
+		m_flgDirtyEnvironmentFrames = ( 1u << m_unFramesInFlight ) - 1;
 		return VK_SUCCESS;
 	}
 
@@ -289,17 +367,8 @@ namespace xrlib
 	{
 		assert( pDescriptors );
 
-		// Create a mapped scene lighting buffer for each frame in flight
-		for ( uint32_t i = 0; i < m_unFramesInFlight; ++i )
-		{
-			auto &buffer = vecSceneLightingBuffers.emplace_back( pDescriptors->CreateBuffer( 
-				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
-				sizeof( SSceneLighting ) ) );
-
-			if ( buffer->MapMemory() != VK_SUCCESS )
-				throw std::runtime_error( "Failed to map scene lighting buffer" );
-		}
+		m_unSceneLightingStride = GetUniformStride( sizeof( SSceneLighting ) );
+		VK_CHECK_RESULT( CreateFrameBuffer( pSceneLightingBuffer, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, m_unSceneLightingStride ) );
 
 		// Initialize the complete GPU block, including padding and unused lights
 		m_sceneLighting = {};
@@ -350,27 +419,18 @@ namespace xrlib
 		VK_CHECK_RESULT( result );
 		VK_CHECK_RESULT( SetEnvironment( nullptr ) );
 
-		// Point each frame's descriptor to that frame's buffer
+		// Point each frame's descriptor to that frame's section of the buffer
 		for ( uint32_t i = 0; i < m_unFramesInFlight; ++i )
 		{
 			std::vector< VkDescriptorSet > descriptors = { vecSceneLightingDescriptors[ i ] };
 			pDescriptors->UpdateUniformBuffer(
 				descriptors,
 				0, // binding = 0 in fragment shader (set 1)
-				vecSceneLightingBuffers[ i ]->GetVkBuffer(),
+				pSceneLightingBuffer->GetVkBuffer(),
 				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				0,
+				m_unSceneLightingStride * i,
 				sizeof( SSceneLighting ) );
 		}
-	}
-
-	VkResult CRenderInfo::UpdateSceneLighting()
-	{
-		if ( !pSceneLighting || state.unFrameIndex >= vecSceneLightingBuffers.size() )
-			return VK_ERROR_INITIALIZATION_FAILED;
-
-		std::memcpy( vecSceneLightingBuffers[ state.unFrameIndex ]->GetMappedData(), pSceneLighting, sizeof( SSceneLighting ) );
-		return VK_SUCCESS;
 	}
 
 } // namespace xrlib

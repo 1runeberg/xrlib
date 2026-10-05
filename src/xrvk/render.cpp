@@ -1979,12 +1979,9 @@ namespace xrlib
 				if ( gpuResult != VK_SUCCESS )
 					return FailGPU( gpuResult );
 
-				if ( pRenderInfo->pSceneLighting )
-				{
-					gpuResult = pRenderInfo->UpdateSceneLighting();
-					if ( gpuResult != VK_SUCCESS )
-						return FailGPU( gpuResult );
-				}
+				gpuResult = pRenderInfo->UpdateFrameBuffers( m_unFrameIndex );
+				if ( gpuResult != VK_SUCCESS )
+					return FailGPU( gpuResult );
 
 				// Begin draw commands for rendering
 				const VkCommandBuffer commands = GetFrameCommandBuffer();
@@ -2171,7 +2168,7 @@ namespace xrlib
 		const VkSubpassContents subpass,
 		const uint32_t unDepthImageIndex )
 	{
-		if ( unSwpachainImageIndex >= m_vecMultiviewRenderTargets.size() || ( renderpass && unDepthImageIndex >= m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].framebuffers.size() ) )
+		if ( m_vecFramesInFlight.empty() || unSwpachainImageIndex >= m_vecMultiviewRenderTargets.size() || ( renderpass && unDepthImageIndex >= m_vecMultiviewRenderTargets[ unSwpachainImageIndex ].framebuffers.size() ) )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
 		if ( startCommandBufferRecording )
@@ -2208,22 +2205,27 @@ namespace xrlib
 
 		// Earlier frames in flight can keep rendering while this one is recorded
 		m_unFrameIndex = ( m_unFrameIndex + 1 ) % unCount;
-		pRenderInfo->state.unFrameIndex = m_unFrameIndex;
 
+		// Only a submitted frame has a fence to wait on
 		auto &frame = m_vecFramesInFlight[ m_unFrameIndex ];
-		VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &frame.vkFence, VK_TRUE, timeoutNs ) );
+		if ( frame.bPending )
+		{
+			VK_CHECK_RETURN( vkWaitForFences( GetLogicalDevice(), 1, &frame.vkFence, VK_TRUE, timeoutNs ) );
+			frame.bPending = false;
+		}
+
 		return vkResetCommandBuffer( frame.vkCommandBuffer, 0 );
 	}
 
 	VkResult CStereoRender::SubmitDraw()
 	{
-		auto &frame = m_vecFramesInFlight.at( m_unFrameIndex );
+		if ( m_vecFramesInFlight.empty() )
+			return VK_ERROR_INITIALIZATION_FAILED;
 
 		// End render recording
+		auto &frame = m_vecFramesInFlight[ m_unFrameIndex ];
 		vkCmdEndRenderPass( frame.vkCommandBuffer );
 		VK_CHECK_RETURN( vkEndCommandBuffer( frame.vkCommandBuffer ) );
-
-		// Reset just before submitting so an earlier failure doesn't leave the fence unsignaled
 		VK_CHECK_RETURN( vkResetFences( GetLogicalDevice(), 1, &frame.vkFence ) );
 
 		// Execute render commands (requires exclusive access to vkQueue)
@@ -2232,6 +2234,8 @@ namespace xrlib
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &frame.vkCommandBuffer;
 		VK_CHECK_RETURN( vkQueueSubmit( GetAppSession()->GetVulkan()->GetVkQueue_Graphics(), 1, &submitInfo, frame.vkFence ) );
+
+		frame.bPending = true;
 		return VK_SUCCESS;
 	}
 
@@ -2249,9 +2253,7 @@ namespace xrlib
 			commandBufferAlloc.commandBufferCount = 1;
 			VK_CHECK_RETURN( vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &frame.vkCommandBuffer ) );
 
-			// Start signaled so the first wait on each frame returns straight away
 			VkFenceCreateInfo fenceCI { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-			fenceCI.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 			VK_CHECK_RETURN( vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &frame.vkFence ) );
 		}
 

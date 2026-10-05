@@ -260,6 +260,7 @@ namespace xrlib
 		{
 			VkCommandBuffer vkCommandBuffer = VK_NULL_HANDLE;
 			VkFence vkFence = VK_NULL_HANDLE;
+			bool bPending = false; // Submitted and not yet waited on
 		};
 
 #pragma endregion TYPES
@@ -494,10 +495,12 @@ namespace xrlib
 			const VkSubpassContents subpass = VK_SUBPASS_CONTENTS_INLINE,
 			const uint32_t unDepthImageIndex = 0 );
 
-		// Waits until the GPU has finished the frame that last used this frame in flight, then resets its command buffer
+		// Waits until the GPU has finished the last frame recorded on the next frame in flight
+		// and resets its command buffer for recording
 		VkResult WaitForFrameInFlight( CRenderInfo *pRenderInfo, const uint64_t timeoutNs = 1000000000 );
 
-		// Submits without waiting, on failure stop rendering and wait for GPU completion before releasing resources
+		// Submits without waiting, the next WaitForFrameInFlight on this frame checks its fence
+		// On failure stop rendering and wait for GPU completion before releasing resources
 		VkResult SubmitDraw();
 
 		void CalculateViewMatrices( std::array< XrMatrix4x4f, 2 > &outViewMatrices, const XrVector3f *eyeScale );
@@ -602,7 +605,7 @@ namespace xrlib
 		std::vector< XrViewConfigurationView > &GetEyeConfigs() { return m_vecEyeConfigs; }
 		std::vector< XrView > &GetEyeViews() { return m_vecEyeViews; }
 		std::vector< SMultiviewRenderTarget > &GetMultiviewRenderTargets() { return m_vecMultiviewRenderTargets;  }
-		VkCommandBuffer GetFrameCommandBuffer() { return m_vecFramesInFlight.at( m_unFrameIndex ).vkCommandBuffer; }
+		VkCommandBuffer GetFrameCommandBuffer() { return m_vecFramesInFlight.empty() ? VK_NULL_HANDLE : m_vecFramesInFlight[ m_unFrameIndex ].vkCommandBuffer; }
 
 		XrSwapchainImageVulkan2KHR *GetSwapchainColorImage( uint32_t unIndex ) { return &m_vecSwapchainColorImages[ unIndex ]; }
 		XrSwapchainImageVulkan2KHR *GetSwapchainDepthImage( uint32_t unIndex ) { return &m_vecSwapchainColorImages[ unIndex ]; }
