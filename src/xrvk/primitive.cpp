@@ -42,17 +42,13 @@ namespace xrlib
 
 	VkResult CPlane2D::InitBuffers( bool bReset )
 	{
-		if ( m_pIndexBuffer )
-			delete m_pIndexBuffer;
-
+		RetireBuffer( m_pIndexBuffer );
 		m_pIndexBuffer = new CDeviceBuffer( m_pSession );
 		VkResult result = InitBuffer( m_pIndexBuffer, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sizeof( unsigned short ) * m_vecIndices.size(), m_vecIndices.data() );
 		if ( result != VK_SUCCESS )
 			return result;
 
-		if ( m_pVertexBuffer )
-			delete m_pVertexBuffer;
-
+		RetireBuffer( m_pVertexBuffer );
 		m_pVertexBuffer = new CDeviceBuffer( m_pSession );
 		result = InitBuffer( m_pVertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( XrVector2f ) * m_vecVertices.size(), m_vecVertices.data() );
 		if ( result != VK_SUCCESS )
@@ -90,7 +86,7 @@ namespace xrlib
 		// Bind shape's index and vertex buffers
 		vkCmdBindIndexBuffer( commandBuffer, GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT16 );
 		vkCmdBindVertexBuffers( commandBuffer, 0, 1, GetVertexBuffer()->GetVkBufferPtr(), vertexOffsets );
-		vkCmdBindVertexBuffers( commandBuffer, 1, 1, GetInstanceBuffer()->GetVkBufferPtr(), instanceOffsets );
+		BindInstanceBuffer( commandBuffer );
 
 		// Bind the descriptor sets
 		if ( !vertexDescriptors.empty() )
@@ -167,17 +163,13 @@ namespace xrlib
 
 	VkResult CPrimitive::InitBuffers( bool bReset ) 
 	{ 
-		if ( m_pIndexBuffer )
-			delete m_pIndexBuffer;
-
+		RetireBuffer( m_pIndexBuffer );
 		m_pIndexBuffer = new CDeviceBuffer( m_pSession );
 		VkResult result = InitBuffer( m_pIndexBuffer, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sizeof( unsigned short ) * m_vecIndices.size(), m_vecIndices.data() );
 		if ( result != VK_SUCCESS )
 			return result;
 
-		if ( m_pVertexBuffer )
-			delete m_pVertexBuffer;
-
+		RetireBuffer( m_pVertexBuffer );
 		m_pVertexBuffer = new CDeviceBuffer( m_pSession );
 		result = InitBuffer( m_pVertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( XrVector3f ) * m_vecVertices.size(), m_vecVertices.data() );
 		if ( result != VK_SUCCESS )
@@ -215,7 +207,7 @@ namespace xrlib
 		// Bind shape's index and vertex buffers
 		vkCmdBindIndexBuffer( commandBuffer, GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT16 );
 		vkCmdBindVertexBuffers( commandBuffer, 0, 1, GetVertexBuffer()->GetVkBufferPtr(), vertexOffsets ); 
-		vkCmdBindVertexBuffers( commandBuffer, 1, 1, GetInstanceBuffer()->GetVkBufferPtr(), instanceOffsets ); 
+		BindInstanceBuffer( commandBuffer );
 
 		// Bind the descriptor sets
 		if ( !vertexDescriptors.empty() )
@@ -302,7 +294,7 @@ namespace xrlib
 		if ( m_pVertexBuffer )
 			delete m_pVertexBuffer;
 
-		m_vecInstanceBuffers.clear();
+		m_pInstanceBuffer.reset();
 	}
 
 	CColoredPrimitive::CColoredPrimitive( 
@@ -332,17 +324,13 @@ namespace xrlib
 
 	VkResult CColoredPrimitive::InitBuffers( bool bReset ) 
 	{ 
-		if ( m_pIndexBuffer )
-			delete m_pIndexBuffer;
-
+		RetireBuffer( m_pIndexBuffer );
 		m_pIndexBuffer = new CDeviceBuffer( m_pSession );
 		VkResult result = InitBuffer( m_pIndexBuffer, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, sizeof( unsigned short ) * m_vecIndices.size(), m_vecIndices.data() );
 		if ( result != VK_SUCCESS )
 			return result;
 
-		if ( m_pVertexBuffer )
-			delete m_pVertexBuffer;
-
+		RetireBuffer( m_pVertexBuffer );
 		m_pVertexBuffer = new CDeviceBuffer( m_pSession );
 		result = InitBuffer( m_pVertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sizeof( SColoredVertex ) * m_vecVertices.size(), m_vecVertices.data() );
 		if ( result != VK_SUCCESS )
@@ -374,7 +362,7 @@ namespace xrlib
 		// Bind shape's index and vertex buffers
 		vkCmdBindIndexBuffer( commandBuffer, GetIndexBuffer()->GetVkBuffer(), 0, VK_INDEX_TYPE_UINT16 );
 		vkCmdBindVertexBuffers( commandBuffer, 0, 1, GetVertexBuffer()->GetVkBufferPtr(), vertexOffsets );
-		vkCmdBindVertexBuffers( commandBuffer, 1, 1, GetInstanceBuffer()->GetVkBufferPtr(), instanceOffsets );
+		BindInstanceBuffer( commandBuffer );
 
 		// Bind the descriptor sets
 		if ( !vertexDescriptors.empty() )

@@ -199,17 +199,22 @@ namespace xrlib
 
 		uint32_t LoadMaterial( CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager* pTextureManager );
 
-		// outMaterialData points into materials, edits are copied to the GPU each rendered frame
+		// outMaterialData points into materials and is valid until that vector is resized
+		// Call UpdateMaterials after editing the values
 		uint32_t LoadMaterial( std::vector< SMaterialUBO* > &outMaterialData, CRenderInfo *pRenderInfo, uint32_t layoutId, uint32_t poolId, CTextureManager *pTextureManager );
 
-		// Call after InitBuffers without changing the vertex count, the first call adds a vertex buffer per frame in flight
+		// Queues loaded material values for each frame in flight
+		void UpdateMaterials();
+
+		// Call after InitBuffers without changing the vertex count
+		// Vertices are copied into each frame in flight as it's recorded, the first call allocates those copies
 		VkResult UpdateVertexBuffer();
 
 		// Call before InitBuffers on an exclusively owned model with pAnimation
 		// Includes morph targets and requires the set 2 layout from a skinning-enabled PBR pipeline
 		VkResult InitSkinning( VkDescriptorSetLayout layout, const XrMatrix4x4f &modelFromAsset );
 
-		// Call after sampling, the pose is copied to the GPU each rendered frame
+		// Call after sampling, the pose reaches each frame in flight as it's recorded
 		VkResult UpdateSkinning();
 
 		// Mesh data
@@ -248,28 +253,29 @@ namespace xrlib
 
 		size_t m_unBufferedVertexCount = 0;
 
-		// Dynamic vertex buffers, one per frame in flight after the first UpdateVertexBuffer
-		std::vector< std::unique_ptr< CDeviceBuffer > > m_vecFrameVertexBuffers;
-		uint32_t m_flgDirtyVertexFrames = 0;  // Frames still holding older vertices
-		uint32_t m_flgStaticVertexFrames = 0; // Frames that may still read the static buffer
-		CDeviceBuffer *GetFrameVertexBuffer();
+		// A dynamic vertex buffer holds a copy per frame in flight, static ones have a zero frame size
+		VkDeviceSize m_unVertexFrameSize = 0;
+		uint32_t m_flgDirtyVertexFrames = 0; // Frames still holding older vertices
 
-		// Skinning and morph weight buffers are per frame in flight, morph vertices and deltas are shared
+		// Pose and morph weights have a copy per frame in flight, morph vertices and deltas are shared
 		XrMatrix4x4f m_modelFromAsset {};
-		std::vector< std::unique_ptr< CDeviceBuffer > > m_vecSkinningBuffers;
+		std::unique_ptr< CDeviceBuffer > m_pSkinningBuffer;
 		std::unique_ptr< CDeviceBuffer > m_pMorphVertexBuffer;
 		std::unique_ptr< CDeviceBuffer > m_pMorphDeltaBuffer;
-		std::vector< std::unique_ptr< CDeviceBuffer > > m_vecMorphWeightBuffers;
+		std::unique_ptr< CDeviceBuffer > m_pMorphWeightBuffer;
+		VkDeviceSize m_unSkinningStride = 0;
+		VkDeviceSize m_unMorphWeightStride = 0;
 		size_t m_unMorphWeightCount = 0;
 		std::vector< XrMatrix4x4f > m_vecSkinningMatrices;
 		std::vector< float > m_vecMorphWeights;
 		uint32_t m_flgDirtySkinningFrames = 0; // Frames still holding an older pose
 		VkDescriptorPool m_vkSkinningPool = VK_NULL_HANDLE;
-		std::vector< VkDescriptorSet > m_vecSkinningSets;
+		std::vector< VkDescriptorSet > m_vecSkinningSets; // One per frame in flight
 
 		// Material UBOs, pFragmentDescriptorsBuffer holds one block of materials per frame in flight
 		VkDeviceSize m_unMaterialStride = 0;
 		size_t m_unLoadedMaterialCount = 0;
+		uint32_t m_flgDirtyMaterialFrames = 0; // Frames still holding older material values
 
 		// Interfaces
 		void DeleteBuffers() override;

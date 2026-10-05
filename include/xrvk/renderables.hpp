@@ -107,6 +107,7 @@ namespace xrlib
 		CDeviceBuffer *pVertexDescriptorsBuffer = nullptr;
 		CDeviceBuffer *pFragmentDescriptorsBuffer = nullptr;
 
+		// pRenderInfo must outlive the renderable, it retires replaced buffers until the GPU is done with them
 		CRenderable( 
 			CSession* pSession, 
 			CRenderInfo* pRenderInfo,
@@ -119,12 +120,12 @@ namespace xrlib
 		
 		virtual ~CRenderable();
 
-		// Interfaces
+		// Interfaces, InitBuffers is safe between frames as replaced buffers are retired rather than freed
 		virtual void Reset() = 0;
 		virtual VkResult InitBuffers( bool bReset = false ) = 0;
 		virtual void Draw( const VkCommandBuffer commandBuffer, const CRenderInfo &renderInfo  ) = 0;
 
-		// Earlier GPU reads must have completed, allocation failure leaves instances unchanged
+		// Allocation failure leaves instances unchanged
 		uint32_t AddInstance( uint32_t unCount, XrVector3f scale = { 1.f, 1.f, 1.f } );
 
 		VkResult InitBuffer(
@@ -143,11 +144,8 @@ namespace xrlib
 			VkMemoryPropertyFlags memPropFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			VkAllocationCallbacks *pCallbacks = nullptr );
 
-		// Copies instanceMatrices into the instance buffer of the frame being recorded
-		VkResult UpdateInstancesBuffer();
-
 		// Selects the frame in flight being recorded and copies CPU-side data into its buffers
-		// EndRenderFrame calls this for visible renderables once that frame's earlier GPU reads have completed
+		// EndRenderFrame calls this for visible renderables once that frame's earlier GPU work has completed
 		virtual VkResult UpdateFrameBuffers( uint32_t unFrameIndex );
 		
 		void ResetScale( float x, float y, float z, uint32_t unInstanceIndex = 0 );
@@ -164,29 +162,42 @@ namespace xrlib
 		[[nodiscard]] uint32_t GetInstanceCount() const { return (uint32_t) instances.size(); }
 		CDeviceBuffer *GetIndexBuffer() { return m_pIndexBuffer; }
 		CDeviceBuffer *GetVertexBuffer() { return m_pVertexBuffer; }
-		CDeviceBuffer *GetInstanceBuffer() { return m_vecInstanceBuffers.empty() ? nullptr : m_vecInstanceBuffers[ m_unFrameIndex ].get(); }
+
+		// The instance buffer holds a copy of the matrices per frame in flight
+		// Bind the frame being recorded at GetInstanceBufferOffset
+		CDeviceBuffer *GetInstanceBuffer() { return m_pInstanceBuffer.get(); }
+		VkDeviceSize GetInstanceBufferOffset() const { return m_unInstanceFrameSize * m_unFrameIndex; }
 
 		XrMatrix4x4f *GetModelMatrix( uint32_t unInstanceIndex = 0, bool bRefresh = false );
 		XrMatrix4x4f *GetUpdatedModelMatrix( uint32_t unInstanceIndex = 0 ) { return GetModelMatrix( unInstanceIndex, true ); }
 	  
 	protected:
 		CSession *m_pSession = nullptr;
+		CRenderInfo *m_pRenderInfo = nullptr;
 		CDeviceBuffer *m_pIndexBuffer = nullptr;
 		CDeviceBuffer *m_pVertexBuffer = nullptr;
 
-		// One instance buffer per frame in flight
-		std::vector< std::unique_ptr< CDeviceBuffer > > m_vecInstanceBuffers;
+		std::unique_ptr< CDeviceBuffer > m_pInstanceBuffer;
+		VkDeviceSize m_unInstanceFrameSize = 0;
 		uint32_t m_unFramesInFlight = 1;
 		uint32_t m_unFrameIndex = 0;
 
-		// Earlier GPU reads of the current instance buffers must have completed
-		VkResult InitInstanceBuffers();
+		uint32_t AllFrameBits() const { return ( 1u << m_unFramesInFlight ) - 1; }
 
-		// Interfaces
+		// Hands a buffer to the render info, which frees it once no frame in flight can still read it
+		void RetireBuffer( CDeviceBuffer *&pBuffer );
+		void RetireBuffer( std::unique_ptr< CDeviceBuffer > &pBuffer );
+
+		// Keeps a buffer that already fits instanceMatrices, otherwise retires it and creates a new one
+		VkResult InitInstanceBuffers();
+		VkResult UpdateInstancesBuffer();
+		void BindInstanceBuffer( VkCommandBuffer commandBuffer );
+
+		// Interfaces, DeleteBuffers frees immediately so it's for destructors only
 		virtual void DeleteBuffers() = 0;
 
 	  private:
-		VkResult CreateInstanceBuffers( std::vector< std::unique_ptr< CDeviceBuffer > > &outBuffers, std::vector< XrMatrix4x4f > &matrices );
+		VkResult CreateInstanceBuffer( std::unique_ptr< CDeviceBuffer > &outBuffer, const std::vector< XrMatrix4x4f > &matrices );
 	};
 
 	class CRenderInfo
@@ -199,6 +210,21 @@ namespace xrlib
 
 		static constexpr uint32_t k_unMaxFramesInFlight = 8;
 		uint32_t GetFramesInFlight() const { return m_unFramesInFlight; }
+
+		// Per-frame strides that keep descriptor offsets aligned
+		VkDeviceSize GetUniformStride( VkDeviceSize unSize ) const { return ( unSize + m_unUniformOffsetAlignment - 1 ) / m_unUniformOffsetAlignment * m_unUniformOffsetAlignment; }
+		VkDeviceSize GetStorageStride( VkDeviceSize unSize ) const { return ( unSize + m_unStorageOffsetAlignment - 1 ) / m_unStorageOffsetAlignment * m_unStorageOffsetAlignment; }
+
+		// Creates a mapped host-coherent buffer with unStride bytes per frame in flight
+		// Each frame's section is zeroed, then seeded from pData when given
+		VkResult CreateFrameBuffer( std::unique_ptr< CDeviceBuffer > &outBuffer, VkBufferUsageFlags usageFlags, VkDeviceSize unStride, const void *pData = nullptr, VkDeviceSize unSize = 0 );
+
+		// Frees the buffer once every frame in flight has finished with it
+		void RetireBuffer( std::unique_ptr< CDeviceBuffer > pBuffer );
+
+		// Selects the frame in flight being recorded and refreshes its scene lighting and environment
+		// Also frees retired buffers once every frame has passed, EndRenderFrame calls this after the fence wait
+		VkResult UpdateFrameBuffers( uint32_t unFrameIndex );
 
 		// For renderables
 		std::vector< VkPipelineLayout > vecPipelineLayouts;
@@ -216,18 +242,17 @@ namespace xrlib
 		VkPipelineLayout stencilLayout = VK_NULL_HANDLE;
 		std::vector< VkPipeline > stencilPipelines;
 
-		// For global scene lighting, pSceneLighting is CPU-side and copied to each frame's buffer
+		// For global scene lighting, the CPU-side pSceneLighting is copied to each frame's section of the buffer
 		uint32_t lightingPoolId = 0;
 		uint32_t lightingLayoutId = 0;
 		SSceneLighting *pSceneLighting = nullptr;
-		std::vector< std::unique_ptr< CDeviceBuffer > > vecSceneLightingBuffers;
-		std::vector< VkDescriptorSet > vecSceneLightingDescriptors;
+		std::unique_ptr< CDeviceBuffer > pSceneLightingBuffer;
+		std::vector< VkDescriptorSet > vecSceneLightingDescriptors; // One per frame in flight
 
 		void SetupSceneLighting();
-		VkResult UpdateSceneLighting();
 		VkDescriptorSet GetSceneLightingDescriptor() const { return vecSceneLightingDescriptors[ state.unFrameIndex ]; }
 
-		// Earlier GPU reads must have completed before changing environment descriptors
+		// Safe between frames, each frame in flight rebinds the images once its earlier GPU work has completed
 		// Shared ownership keeps images alive, nullptr disables IBL without changing direct/ambient light
 		VkResult SetEnvironment( std::shared_ptr< CEnvironmentLighting > environment, float intensity = 1.f, float rotation = 0.f );
 
@@ -303,9 +328,25 @@ namespace xrlib
 		VkDevice m_device = VK_NULL_HANDLE;
 		CSession *m_pSession = nullptr;
 		uint32_t m_unFramesInFlight = 2;
+		VkDeviceSize m_unUniformOffsetAlignment = 1;
+		VkDeviceSize m_unStorageOffsetAlignment = 1;
+
+		// Retired buffers are freed once each frame in flight has passed its fence
+		struct SRetiredBuffer
+		{
+			uint32_t flgFrames;
+			std::unique_ptr< CDeviceBuffer > pBuffer;
+		};
+		std::vector< SRetiredBuffer > m_vecRetiredBuffers;
+
 		SSceneLighting m_sceneLighting {};
+		VkDeviceSize m_unSceneLightingStride = 0;
+
+		// Replaced environments stay alive until every frame has rebound the current one
+		uint32_t m_flgDirtyEnvironmentFrames = 0;
 		std::shared_ptr< CEnvironmentLighting > m_pDefaultEnvironment;
 		std::shared_ptr< CEnvironmentLighting > m_pEnvironment;
+		std::vector< std::shared_ptr< CEnvironmentLighting > > m_vecRetiredEnvironments;
 	};
 
 } // namespace xrlib
