@@ -495,8 +495,7 @@ namespace xrlib
 			const VkSubpassContents subpass = VK_SUBPASS_CONTENTS_INLINE,
 			const uint32_t unDepthImageIndex = 0 );
 
-		// Waits until the GPU has finished the last frame recorded on the next frame in flight
-		// and resets its command buffer for recording
+		// Waits for the next frame slot and resets its command buffer
 		VkResult WaitForFrameInFlight( CRenderInfo *pRenderInfo, const uint64_t timeoutNs = 1000000000 );
 
 		// Submits without waiting, the next WaitForFrameInFlight on this frame checks its fence
