@@ -107,7 +107,7 @@ namespace xrlib
 		CDeviceBuffer *pVertexDescriptorsBuffer = nullptr;
 		CDeviceBuffer *pFragmentDescriptorsBuffer = nullptr;
 
-		// pRenderInfo must outlive the renderable, it retires replaced buffers until the GPU is done with them
+		// pRenderInfo must outlive the renderable and owns retired buffers
 		CRenderable( 
 			CSession* pSession, 
 			CRenderInfo* pRenderInfo,
@@ -220,7 +220,9 @@ namespace xrlib
 		VkResult CreateFrameBuffer( std::unique_ptr< CDeviceBuffer > &outBuffer, VkBufferUsageFlags usageFlags, VkDeviceSize unStride, const void *pData = nullptr, VkDeviceSize unSize = 0 );
 
 		// Frees the buffer once every frame in flight has finished with it
-		void RetireBuffer( std::unique_ptr< CDeviceBuffer > pBuffer );
+		// Allocation failure leaves ownership with the caller
+		void RetireBuffer( CDeviceBuffer *&pBuffer );
+		void RetireBuffer( std::unique_ptr< CDeviceBuffer > &&pBuffer );
 
 		// Selects the frame in flight being recorded and refreshes its scene lighting and environment
 		// Also frees retired buffers once every frame has passed, EndRenderFrame calls this after the fence wait

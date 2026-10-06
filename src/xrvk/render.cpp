@@ -2242,19 +2242,28 @@ namespace xrlib
 	VkResult CStereoRender::CreateFramesInFlight( uint32_t unCount )
 	{
 		DestroyFramesInFlight();
+		m_vecFramesInFlight.resize( unCount );
 
-		for ( uint32_t i = 0; i < unCount; ++i )
+		for ( auto &frame : m_vecFramesInFlight )
 		{
-			auto &frame = m_vecFramesInFlight.emplace_back();
-
 			VkCommandBufferAllocateInfo commandBufferAlloc { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
 			commandBufferAlloc.commandPool = m_vkRenderCommandPool;
 			commandBufferAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 			commandBufferAlloc.commandBufferCount = 1;
-			VK_CHECK_RETURN( vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &frame.vkCommandBuffer ) );
+			VkResult result = vkAllocateCommandBuffers( GetLogicalDevice(), &commandBufferAlloc, &frame.vkCommandBuffer );
+			if ( result != VK_SUCCESS )
+			{
+				DestroyFramesInFlight();
+				return result;
+			}
 
 			VkFenceCreateInfo fenceCI { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-			VK_CHECK_RETURN( vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &frame.vkFence ) );
+			result = vkCreateFence( GetLogicalDevice(), &fenceCI, nullptr, &frame.vkFence );
+			if ( result != VK_SUCCESS )
+			{
+				DestroyFramesInFlight();
+				return result;
+			}
 		}
 
 		m_unFrameIndex = unCount - 1;
@@ -2279,6 +2288,7 @@ namespace xrlib
 		}
 
 		m_vecFramesInFlight.clear();
+		m_unFrameIndex = 0;
 	}
 
 	void CStereoRender::CalculateViewMatrices( std::array< XrMatrix4x4f, 2 > &outViewMatrices, const XrVector3f *eyeScale ) 

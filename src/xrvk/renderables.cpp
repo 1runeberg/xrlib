@@ -103,8 +103,7 @@ namespace xrlib
 		if ( !pBuffer )
 			return;
 
-		m_pRenderInfo->RetireBuffer( std::unique_ptr< CDeviceBuffer >( pBuffer ) );
-		pBuffer = nullptr;
+		m_pRenderInfo->RetireBuffer( pBuffer );
 	}
 
 	void CRenderable::RetireBuffer( std::unique_ptr< CDeviceBuffer > &pBuffer )
@@ -211,7 +210,7 @@ namespace xrlib
 		return &instanceMatrices[ unInstanceIndex ];
 	}
 
-	CRenderInfo::CRenderInfo( CSession *pSession, uint32_t unFramesInFlight ) 
+	CRenderInfo::CRenderInfo( CSession *pSession, uint32_t unFramesInFlight )
 	{ 
 		assert( pSession );
 
@@ -296,10 +295,25 @@ namespace xrlib
 		return VK_SUCCESS;
 	}
 
-	void CRenderInfo::RetireBuffer( std::unique_ptr< CDeviceBuffer > pBuffer )
+	void CRenderInfo::RetireBuffer( CDeviceBuffer *&pBuffer )
 	{
-		if ( pBuffer )
-			m_vecRetiredBuffers.push_back( { ( 1u << m_unFramesInFlight ) - 1, std::move( pBuffer ) } );
+		if ( !pBuffer )
+			return;
+
+		auto &retired = m_vecRetiredBuffers.emplace_back();
+		retired.flgFrames = ( 1u << m_unFramesInFlight ) - 1;
+		retired.pBuffer.reset( pBuffer );
+		pBuffer = nullptr;
+	}
+
+	void CRenderInfo::RetireBuffer( std::unique_ptr< CDeviceBuffer > &&pBuffer )
+	{
+		if ( !pBuffer )
+			return;
+
+		auto &retired = m_vecRetiredBuffers.emplace_back();
+		retired.flgFrames = ( 1u << m_unFramesInFlight ) - 1;
+		retired.pBuffer = std::move( pBuffer );
 	}
 
 	VkResult CRenderInfo::UpdateFrameBuffers( uint32_t unFrameIndex )
