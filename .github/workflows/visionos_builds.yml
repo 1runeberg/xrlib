@@ -1,0 +1,22 @@
+# xrlib
+
+name: visionos-27
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['main']
+
+
+jobs:
+    build-static:
+        uses: ./.github/workflows/_src_visionos_builds.yml
+        with:
+          matrix-json: >
+            {
+              "build_type": ["Debug", "Release"],
+              "enable_xrvk": ["ON", "OFF"]
+            }
+          build-as-static : "ON"
+          export-artifacts: "OFF"

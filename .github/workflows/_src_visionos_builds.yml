@@ -1,0 +1,67 @@
+# xrlib
+
+name: _src_visionos_builds
+
+on:
+  workflow_call:
+    inputs:
+      matrix-json:
+        description: 'Build matrix json'
+        required: true
+        type: string
+      build-as-static:
+        description: 'Whether to build as a static library (ON/OFF)'
+        required: true
+        type: string
+      export-artifacts:
+        description: 'Whether to export artifacts (ON/OFF)'
+        required: true
+        type: string
+
+
+jobs:
+  build:
+    runs-on: xcode-27
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(inputs['matrix-json']) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Checkout vision-openxr SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: 1runeberg/vision-openxr-sdk
+          path: vision-openxr-sdk
+          fetch-depth: 1
+
+      - name: Checkout SDK Vulkan headers
+        run: git -C vision-openxr-sdk submodule update --init --depth 1 third_party/vulkan_headers
+
+      - name: Configure CMake on visionOS
+        run: |
+          cmake -S . -B build/visionos -G Xcode \
+          -D CMAKE_SYSTEM_NAME=visionOS \
+          -D CMAKE_OSX_ARCHITECTURES=arm64 \
+          -D CMAKE_OSX_DEPLOYMENT_TARGET=27.0 \
+          -D VISION_OPENXR_SDK="$GITHUB_WORKSPACE/vision-openxr-sdk" \
+          -D BUILD_SHADERS=OFF \
+          -D BUILD_AS_STATIC=${{ inputs.build-as-static }} \
+          -D ENABLE_XRVK=${{ matrix.enable_xrvk }}
+
+      - name: Build xrlib
+        run: cmake --build build/visionos --config ${{ matrix.build_type }} -- CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload build artifact
+        if: ${{ inputs.export-artifacts == 'ON' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xrlib-visionos-static_${{ inputs.build-as-static }}-xrvk_${{ matrix.enable_xrvk }}-${{ matrix.build_type }}
+          path: build/visionos/lib/${{ matrix.build_type }}
+          if-no-files-found: error
