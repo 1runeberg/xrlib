@@ -30,7 +30,7 @@ namespace xrlib::EXT
 		enum class EHandInteractionComponent
 		{
 			PinchPose,
-			PinchPoke,
+			Poke,
 			PinchValue,
 			PinchReady,
 			AimActivateValue,
@@ -41,7 +41,7 @@ namespace xrlib::EXT
 
 		static std::string GetInteractionProfilePath() 	{ return "/interaction_profiles/ext/hand_interaction_ext"; }
 		static std::string GetBindingPath_PinchPose( XrHandEXT hand ) { return "/user/hand/" + std::string( hand == XR_HAND_LEFT_EXT ? "left" : "right" ) + "/input/pinch_ext/pose"; }
-		static std::string GetBindingPath_PinchPoke( XrHandEXT hand ) { return "/user/hand/" + std::string( hand == XR_HAND_LEFT_EXT ? "left" : "right" ) + "/input/pinch_poke/pose"; }
+		static std::string GetBindingPath_Poke( XrHandEXT hand ) { return "/user/hand/" + std::string( hand == XR_HAND_LEFT_EXT ? "left" : "right" ) + "/input/poke_ext/pose"; }
 		static std::string GetBindingPath_PinchValue( XrHandEXT hand ) { return "/user/hand/" + std::string( hand == XR_HAND_LEFT_EXT ? "left" : "right" ) + "/input/pinch_ext/value"; }
 		static std::string GetBindingPath_PinchReady( XrHandEXT hand ) { return "/user/hand/" + std::string( hand == XR_HAND_LEFT_EXT ? "left" : "right" ) + "/input/pinch_ext/ready_ext"; }
 		static std::string GetBindingPath_AimActivateValue( XrHandEXT hand ) { return "/user/hand/" + std::string( hand == XR_HAND_LEFT_EXT ? "left" : "right" ) + "/input/aim_activate_ext/value"; }

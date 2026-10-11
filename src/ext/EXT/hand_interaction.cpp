@@ -29,8 +29,8 @@ namespace xrlib
 			case EXT::CHandInteraction::EHandInteractionComponent::PinchPose:
 				sFullBindingPath = EXT::CHandInteraction::GetBindingPath_PinchPose( hand );
 				break;
-			case EXT::CHandInteraction::EHandInteractionComponent::PinchPoke:
-				sFullBindingPath = EXT::CHandInteraction::GetBindingPath_PinchPoke( hand );
+			case EXT::CHandInteraction::EHandInteractionComponent::Poke:
+				sFullBindingPath = EXT::CHandInteraction::GetBindingPath_Poke( hand );
 				break;
 			case EXT::CHandInteraction::EHandInteractionComponent::PinchValue:
 				sFullBindingPath = EXT::CHandInteraction::GetBindingPath_PinchValue( hand );
@@ -60,7 +60,7 @@ namespace xrlib
 		XrResult xrResult = xrStringToPath( xrInstance, sFullBindingPath.c_str(), &xrPath );
 		if ( !XR_UNQUALIFIED_SUCCESS( xrResult ) )
 		{
-			LogError( "SHandInteraction::AddBinding", "Error adding binding path [%s]: (%s) for: (%s)", XrEnumToString( xrResult ), sFullBindingPath.c_str(), Path() );
+			LogError( "SHandInteraction::AddBinding", "Error adding binding path [%s]: (%s) for: (%s)", sFullBindingPath.c_str(), XrEnumToString( xrResult ), Path() );
 			return xrResult;
 		}
 
