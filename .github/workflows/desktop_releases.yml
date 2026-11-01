@@ -115,7 +115,7 @@ jobs:
                 cp ./${{ github.ref_name }}_xrlib_source/third_party/simdjson/LICENSE* ./${{ github.ref_name }}_xrlib_include/licenses/simdjson
                 cp ./${{ github.ref_name }}_xrlib_source/third_party/stb/LICENSE ./${{ github.ref_name }}_xrlib_include/licenses/stb-LICENSE
 
-            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                 name: xrlib-${{ github.ref_name }}-INCLUDE
                 path: ./${{ github.ref_name }}_xrlib_include
@@ -157,12 +157,12 @@ jobs:
                 name: xrlib-windows-latest_compiler_cl_static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-static/no_renderer
               
-            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                 name: xrlib_${{ github.ref_name }}-windows-shared-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_windows-shared
 
-            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                 name: xrlib_${{ github.ref_name }}-windows-static-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_windows-static
@@ -235,12 +235,12 @@ jobs:
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/clang/no_renderer
 
             # Upload finalized library compilations
-            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                 name: xrlib_${{ github.ref_name }}-ubuntu-shared-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_ubuntu-shared
 
-            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                 name: xrlib_${{ github.ref_name }}-ubuntu-static-libs
                 path: ./${{ github.ref_name }}_xrlib_binaries_ubuntu-static

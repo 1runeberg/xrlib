@@ -37,7 +37,7 @@ jobs:
           
       - name: Archive source code
         if: ${{ (inputs.export-artifacts == 'ON') && (matrix.os == 'windows-latest') && (inputs.build-as-static == 'OFF') && (matrix.enable_xrvk == 'ON') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
             name: xrlib-source
             path: ./
@@ -82,7 +82,7 @@ jobs:
 
       - name: Upload build artifact (windows dll & symbol exports)
         if: ${{ inputs.export-artifacts == 'ON' && (matrix.os == 'windows-latest') &&  (inputs.build-as-static == 'OFF') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
             name: xrlib-${{ matrix.os }}_compiler_${{ matrix.cpp_compiler }}_static_${{ inputs.build-as-static }}-xrvk_${{ matrix.enable_xrvk }}
             path: |
@@ -91,14 +91,14 @@ jobs:
 
       - name: Upload build artifact (windows static)
         if: ${{ inputs.export-artifacts == 'ON' && (matrix.os == 'windows-latest') && (inputs.build-as-static == 'ON') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
             name: xrlib-${{ matrix.os }}_compiler_${{ matrix.cpp_compiler }}_static_${{ inputs.build-as-static }}-xrvk_${{ matrix.enable_xrvk }}
             path: lib
 
       - name: Upload build artifact (linux)
         if: ${{ inputs.export-artifacts == 'ON' && (matrix.os == 'ubuntu-latest') }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
             name: xrlib-${{ matrix.os }}_compiler_${{ matrix.cpp_compiler }}_static_${{ inputs.build-as-static }}-xrvk_${{ matrix.enable_xrvk }}
             path: lib
