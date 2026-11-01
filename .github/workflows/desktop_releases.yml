@@ -98,7 +98,7 @@ jobs:
                 mkdir ${{ github.ref_name }}_xrlib_source
                 mkdir ${{ github.ref_name }}_xrlib_include
          
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-source
                 path: ${{ github.ref_name }}_xrlib_source
@@ -137,22 +137,22 @@ jobs:
                 mkdir ${{ github.ref_name }}_xrlib_binaries_windows-static/with_renderer
                 mkdir ${{ github.ref_name }}_xrlib_binaries_windows-static/no_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-windows-latest_compiler_cl_static_OFF-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-shared/with_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-windows-latest_compiler_cl_static_OFF-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-shared/no_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-windows-latest_compiler_cl_static_ON-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-static/with_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-windows-latest_compiler_cl_static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_windows-static/no_renderer
@@ -193,43 +193,43 @@ jobs:
                 mkdir ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/clang/no_renderer
 
             # Assemble all shared libraries
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_OFF-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/gnu/with_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_OFF-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/gnu/no_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_OFF-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/clang/with_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_OFF-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-shared/clang/no_renderer
             
             # Assemble all static libraries
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_ON-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/gnu/with_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_g++_static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/gnu/no_renderer
               
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_ON-xrvk_ON
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/clang/with_renderer
 
-            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                 name: xrlib-ubuntu-latest_compiler_clang++_static_ON-xrvk_OFF
                 path: ${{ github.ref_name }}_xrlib_binaries_ubuntu-static/clang/no_renderer
